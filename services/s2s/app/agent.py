@@ -7,7 +7,9 @@ Each caller sets three participant attributes (the demo page does this):
 and ``voice`` (female | male, the voice their translated speech is read in).
 
 For every caller (as a speaker)
-    mic track -> VAD (here) -> each utterance to the ASR NIM (partial + final transcripts)
+    mic track -> echo cancellation -> background noise removal (Maxine BNR NIM, when
+    BNR_GRPC_URL is set; bnr.py) -> VAD (here) -> each utterance to the ASR NIM (partial +
+    final transcripts)
 For every final utterance, for each other caller (as a listener)
     hear == speak  -> nothing to translate; the page plays the original audio
     otherwise      -> translate into ``hear`` (once per target language)
@@ -44,6 +46,7 @@ from livekit import rtc
 from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
 from .asr import AsrStream
+from .bnr import BNR_GRPC_URL, BnrStream
 from .languages import HEAR, PROMPT_NAME, SCRIPT, SPEAK
 
 log = logging.getLogger("s2s")
@@ -663,26 +666,48 @@ class SpeakerInput:
                 asr.close()
 
     async def _pump(self, asr: AsrStream):
-        sent = 0
+        """Mic -> echo cancellation -> background noise removal (when BNR_GRPC_URL is set) -> ASR.
+        Echo cancellation comes first: it models the echo as a copy of the playout, which noise
+        removal would no longer be."""
+        self.sent = 0
         stream = rtc.AudioStream(self.track, sample_rate=IN_SR, num_channels=1, frame_size_ms=20)
         apm = rtc.AudioProcessingModule(echo_cancellation=True) if ECHO_CANCEL else None
         self.echo = EchoMonitor()
         clock = None                                    # wall time of the next mic sample
+        bnr = BnrStream(IN_SR) if BNR_GRPC_URL else None
+        if bnr is not None and not await bnr.start():
+            bnr = None
+        cleaned = asyncio.create_task(self._feed_cleaned(bnr, asr)) if bnr is not None else None
         try:
             async for ev in stream:
                 data = ev.frame.data.tobytes()
                 if apm is not None:
                     data, clock = self._cancel_echo(apm, data, clock)
-                asr.feed(data)
-                sent += len(data) // 2
-                self.sent_samples.append(sent)
-                self.sent_wall.append(time.time())
-                if len(self.sent_samples) > 50 * 600:            # keep ~10 minutes of mapping
-                    del self.sent_samples[:25 * 600], self.sent_wall[:25 * 600]
+                now = time.time()
+                if bnr is not None and bnr.push(data, now):
+                    continue                            # reaches ASR cleaned, via _feed_cleaned
+                self._feed(asr, data, now)
         except Exception:  # noqa: BLE001
             log.exception("microphone pump for %s failed", self.identity)
         finally:
+            if cleaned is not None:
+                cleaned.cancel()
+            if bnr is not None:
+                await bnr.close()
             await stream.aclose()
+
+    async def _feed_cleaned(self, bnr: BnrStream, asr: AsrStream):
+        while (item := await bnr.out.get()) is not None:
+            self._feed(asr, *item)
+
+    def _feed(self, asr: AsrStream, data: bytes, spoken: float):
+        """Audio to ASR, remembering when it was spoken (to place ASR timestamps in time)."""
+        asr.feed(data)
+        self.sent += len(data) // 2
+        self.sent_samples.append(self.sent)
+        self.sent_wall.append(spoken)
+        if len(self.sent_samples) > 50 * 600:            # keep ~10 minutes of mapping
+            del self.sent_samples[:25 * 600], self.sent_wall[:25 * 600]
 
     def _cancel_echo(self, apm: rtc.AudioProcessingModule, data: bytes, clock: float | None):
         """Run one mic frame through AEC3 in 10 ms blocks, each preceded by the 10 ms of room

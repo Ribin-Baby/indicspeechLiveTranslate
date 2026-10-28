@@ -14,6 +14,7 @@ host, deploys and uses itself:
 
 | Step | Model | Where it runs | API |
 |---|---|---|---|
+| Noise removal | NVIDIA Maxine BNR (v2, 48 kHz), on each caller's mic before speech detection; since 2026-10-28 | Maxine BNR NIM on another GPU host (`BNR_GRPC_URL` in `.env`) | gRPC `EnhanceAudio` stream, 10 ms chunks (`services/s2s/app/bnr.py`) |
 | Speech recognition | NVIDIA Parakeet 1.1B RNNT multilingual, offline mode | Riva runtime on this host's GPU (meetmind's `deploy/gpu-host`, service `asr`), `127.0.0.1:8001` | `POST /v1/audio/transcriptions`, one request per utterance (the same API as the IndicConformer NIM) |
 | Translation | **Qwen** `qwen3.8-27b`, a chat LLM with an interpreter instruction (thinking off). Since 2026-10-28; Riva Translate 1.6B before, and still the default without the settings | vLLM on another GPU host (`S2S_TRANSLATE_API=chat`, `S2S_TRANSLATE_URL`, `S2S_TRANSLATE_MODEL` in `.env`) | OpenAI chat completions, streamed |
 | Translation (default) | NVIDIA Riva Translate 1.6B (`megatronnmt_any_any_1b`: 36 languages, any direction) | Riva runtime on this host's GPU (meetmind's service `nmt`), `127.0.0.1:8002` | `POST /v1/text/translations`, the Riva Translate NIM's API |
@@ -382,6 +383,7 @@ the current ones):
 | `TRANSLATE_API`, `TRANSLATE_URL`, `TRANSLATE_MODEL` | `chat`, Qwen's `/v1` URL, `qwen3.8-27b` (from `S2S_TRANSLATE_API`, `S2S_TRANSLATE_URL`, `S2S_TRANSLATE_MODEL` in `.env`); without those, `riva`, `http://127.0.0.1:8002` | `openai`, `http://127.0.0.1:8002/v1`, `indic-translate` |
 | `TTS_API` | `magpie` (`MAGPIE_TTS_URL`; voices `MAGPIE_FEMALE_VOICE` Louise, `MAGPIE_MALE_VOICE` Leo) | `indic-speak` (`TTS_URL`) |
 | `S2S_SPEAK_LANGUAGES`, `S2S_HEAR_LANGUAGES` | `en,hi` | unset: every language the models cover |
+| `BNR_GRPC_URL` (`BNR_INTENSITY`, default 1.0) | the Maxine BNR NIM (`host:8001`): noise removal on | the same; unset: off |
 
 **Sharing a LiveKit server.** The agent registers as `indic-s2s` (`S2S_AGENT_NAME`) and joins
 only rooms that ask for it by that name: the web app puts the request in every caller's
@@ -449,8 +451,34 @@ one call. Set it in `.env` and run `docker compose up -d s2s-agent`.
   translations, none were left in mixed scripts. Retrying without the end mark was worse,
   because it sometimes brought the name swap back.
 
+**Background noise removal** (`services/s2s/app/bnr.py`, when `BNR_GRPC_URL` is set). Each
+mic, after echo cancellation, streams through NVIDIA's Maxine BNR NIM in 10 ms chunks. That's
+16 kHz up to the model's 48 kHz and back, with LiveKit's resampler at its no-delay setting.
+Echo cancellation comes first because it models the echo as a copy of the playout, which
+denoised audio no longer is. Measured on 2026-10-28:
+
+- Each 10 ms chunk takes ~13 ms round trip, and the cleaned audio lags by ~40 ms (the model's
+  lookahead). The noise floor drops ~37 dB while speech keeps its level.
+- Final transcripts arrive ~70 ms later: a median 718 ms after the speaker stops, against
+  649 ms without it (`clients/asr_timing_test.py`, 8 utterances each). In full calls on clean
+  clips, the other caller heard the translation after 1.45–1.58 s with it and 1.37–1.49 s
+  without it, ~60–90 ms more (`clients/call_test_en_hi.py`, two runs each way).
+- Hindi with fan noise, hum and keyboard clicks mixed in at 5 dB SNR
+  (`testdata/sample_hindi_noisy.wav`, `--hindi /td/sample_hindi_noisy.wav`):
+  - With it, the meaning came through in all 4 runs ("…गणित की कक्षा शुरू करेंगे…" → "…begin
+    our math class…"). One word slipped twice ("कृतिया" for "कृपया") and was still translated
+    as "please".
+  - Without it, 4 of 6 runs had wrong words ("दनिक/दमित की कक्षा", "फिर क्या" for "कृपया"),
+    and one became "the class on excrement" ("गन्द की कक्षा").
+  - The English noisy clip was recognized correctly either way.
+
+If the NIM is unreachable, errors, or leaves 0.5 s unanswered, that mic goes back to raw audio,
+so a call never stops because of noise removal. The latency figures still count from when the
+caller actually stopped: the agent maps the cleaned audio back to the mic's own clock, minus the
+model's lag.
+
 **Per utterance:** the agent takes the caller's mic (16 kHz; echo-cancelled when playout
-leaks into it, see below), runs Silero VAD on it (`services/s2s/app/vad.py`, CPU) and
+leaks into it, see below; noise removed, see above), runs Silero VAD on it (`services/s2s/app/vad.py`, CPU) and
 sends each finished utterance to the ASR NIM (`services/s2s/app/asr.py`). On each final
 transcript, it translates into every listener language at the same time (streaming the
 text as captions), and each language goes to TTS as soon as it is ready: **once per
