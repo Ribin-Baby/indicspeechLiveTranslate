@@ -37,3 +37,5 @@ services:
     environment:
       S2S_SPEAK_LANGUAGES: en,hi
       S2S_HEAR_LANGUAGES: en,hi
+      TTS_API: magpie                           # the voice list the page offers, and its previews
+      MAGPIE_TTS_URL: ${MAGPIE_TTS_URL}

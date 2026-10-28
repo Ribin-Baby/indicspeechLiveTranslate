@@ -47,7 +47,7 @@ from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
 from .asr import AsrStream
 from .bnr import BNR_GRPC_URL, BnrStream
-from .languages import HEAR, PROMPT_NAME, SCRIPT, SPEAK
+from .languages import HEAR, MAGPIE_LOCALE, PROMPT_NAME, SCRIPT, SPEAK, VOICES, voice_id
 
 log = logging.getLogger("s2s")
 
@@ -61,8 +61,6 @@ TRANSLATE_API = os.environ.get("TRANSLATE_API", "openai")
 # indic-speak: our TTS service (TTS_URL); magpie: an NVIDIA Magpie TTS NIM (MAGPIE_TTS_URL, .../v1)
 TTS_API = os.environ.get("TTS_API", "indic-speak")
 MAGPIE_TTS_URL = os.environ.get("MAGPIE_TTS_URL", "http://127.0.0.1:9000/v1").rstrip("/")
-MAGPIE_LOCALE = {"en": "en-US", "hi": "hi-IN"}            # the call languages Magpie voices
-MAGPIE_VOICE = {"female": os.environ.get("MAGPIE_FEMALE_VOICE", "Louise"), "male": os.environ.get("MAGPIE_MALE_VOICE", "Leo")}
 ASR_PARTIALS = os.environ.get("S2S_ASR_PARTIALS", "1") == "1"
 VAD_MIN_SILENCE_MS = int(os.environ.get("S2S_VAD_MIN_SILENCE_MS", "500"))
 # Echo protection. A browser cancels echo from its own speaker only. Two devices in one
@@ -101,19 +99,19 @@ class Caller:
     name: str
     speak: str
     hear: str
-    voice: str
+    voice: str                     # one of languages.VOICES: how the others hear this caller
+    bnr: bool                      # background noise removal on this caller's mic (if available)
 
     @staticmethod
     def from_participant(p: rtc.RemoteParticipant) -> "Caller":
         a = p.attributes
         speak = a.get("speak", "hi") if a.get("speak") in SPEAK else "hi"
         hear = a.get("hear", speak) if a.get("hear") in HEAR else speak
-        voice = "male" if a.get("voice") == "male" else "female"
-        return Caller(p.identity, p.name or p.identity, speak, hear, voice)
+        return Caller(p.identity, p.name or p.identity, speak, hear, voice_id(a.get("voice")), a.get("bnr") != "off")
 
     def public(self) -> dict:
         return {"identity": self.identity, "name": self.name, "speak": self.speak,
-                "hear": self.hear, "voice": self.voice}
+                "hear": self.hear, "voice": self.voice, "bnr": self.bnr}
 
 
 @dataclass
@@ -542,7 +540,7 @@ class Synthesizer:
         finished = False
         try:
             await ws.send(json.dumps({"type": "synthesize", "id": utt.id, "text": text, "language": lang,
-                                      "gender": voice, "sample_rate": OUT_SR, "format": "pcm_s16le"}))
+                                      "gender": VOICES[voice_id(voice)], "sample_rate": OUT_SR, "format": "pcm_s16le"}))
             async for msg in ws:
                 if isinstance(msg, bytes):
                     for pb in playbacks:
@@ -591,7 +589,7 @@ class MagpieSynthesizer:
             form = aiohttp.FormData()
             form.add_field("language", locale)
             form.add_field("text", text)
-            form.add_field("voice", f"Magpie-Multilingual.{locale.upper()}.{MAGPIE_VOICE[voice]}")
+            form.add_field("voice", f"Magpie-Multilingual.{locale.upper()}.{voice_id(voice)}")
             form.add_field("sample_rate_hz", str(OUT_SR))
             t0, size, stats = time.perf_counter(), 0, {}
             async with self.http.post(f"{MAGPIE_TTS_URL}/audio/synthesize_online", data=form) as r:
@@ -624,17 +622,19 @@ class SpeakerInput:
     def __init__(self, call: "CallTranslator", identity: str, track: rtc.RemoteAudioTrack):
         self.call, self.identity, self.track = call, identity, track
         self.lang: str | None = None
+        self.bnr = True                       # the caller wants background noise removal
         self.task: asyncio.Task | None = None
         # stream position (16 kHz samples sent) -> wall clock, to place ASR timestamps in time
         self.sent_samples: list[int] = []
         self.sent_wall: list[float] = []
         self.echo = EchoMonitor()
 
-    def start(self, lang: str):
-        if self.task is not None and self.lang == lang:
+    def start(self, lang: str, bnr: bool = True):
+        """(Re)start recognition; a change of language or of noise removal restarts it."""
+        if self.task is not None and self.lang == lang and self.bnr == bnr:
             return
         self.stop()
-        self.lang = lang
+        self.lang, self.bnr = lang, bnr
         self.task = asyncio.create_task(self._run(lang))
 
     def stop(self):
@@ -652,7 +652,8 @@ class SpeakerInput:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=5, sock_read=30)) as http:
             asr = AsrStream(http, lang, ASR_PARTIALS, VAD_MIN_SILENCE_MS)
             self.sent_samples, self.sent_wall = [], []
-            log.info("speech recognition for %s (%s) started", self.identity, lang)
+            log.info("speech recognition for %s (%s, noise removal %s) started", self.identity, lang,
+                     "on" if BNR_GRPC_URL and self.bnr else "off")
             pump = asyncio.create_task(self._pump(asr))
             try:
                 while True:
@@ -674,7 +675,7 @@ class SpeakerInput:
         apm = rtc.AudioProcessingModule(echo_cancellation=True) if ECHO_CANCEL else None
         self.echo = EchoMonitor()
         clock = None                                    # wall time of the next mic sample
-        bnr = BnrStream(IN_SR) if BNR_GRPC_URL else None
+        bnr = BnrStream(IN_SR) if BNR_GRPC_URL and self.bnr else None
         if bnr is not None and not await bnr.start():
             bnr = None
         cleaned = asyncio.create_task(self._feed_cleaned(bnr, asr)) if bnr is not None else None
@@ -787,7 +788,7 @@ class CallTranslator:
                 if pub.kind == rtc.TrackKind.KIND_AUDIO and pub.track is not None:
                     self.attach_mic(ident, pub.track)
             if ident in self.inputs:
-                self.inputs[ident].start(caller.speak)       # restarts ASR if `speak` changed
+                self.inputs[ident].start(caller.speak, caller.bnr)   # restarts ASR if either changed
         if changed:
             self.update_permissions()
             await self.status()
@@ -802,7 +803,7 @@ class CallTranslator:
             cur.stop()
         inp = SpeakerInput(self, ident, track)
         self.inputs[ident] = inp
-        inp.start(self.callers[ident].speak)
+        inp.start(self.callers[ident].speak, self.callers[ident].bnr)
 
     def update_permissions(self):
         """Each translation track may only be subscribed to by the caller it is for."""

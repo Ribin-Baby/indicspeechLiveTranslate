@@ -14,12 +14,13 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+import aiohttp
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from pydantic import BaseModel, Field
 
-from .languages import HEAR, SPEAK, describe
+from .languages import HEAR, MAGPIE_LOCALE, SPEAK, TTS_API, VOICES, describe, voice_id
 
 API_KEY = os.environ["LIVEKIT_API_KEY"]
 API_SECRET = os.environ["LIVEKIT_API_SECRET"]
@@ -84,12 +85,39 @@ class JoinRequest(BaseModel):
     room: str = Field(min_length=1, max_length=60)
     speak: str
     hear: str
-    voice: str = "female"
+    voice: str = "female"          # one of describe()["voices"], or female/male for that default
+    bnr: bool = True               # background noise removal on this caller's mic
 
 
 @app.get("/api/languages")
 async def languages():
     return describe()
+
+
+# A short sample of each voice, so callers can hear one before picking it (Magpie only).
+MAGPIE_TTS_URL = os.environ.get("MAGPIE_TTS_URL", "").rstrip("/")
+PREVIEW_TEXT = {"en": "Hello! This is how the others in the call will hear me.",
+                "hi": "नमस्ते! कॉल में बाकी लोग मुझे इस आवाज़ में सुनेंगे।"}
+_previews: dict[tuple[str, str], bytes] = {}
+
+
+@app.get("/api/voice-preview")
+async def voice_preview(voice: str, lang: str = "en"):
+    if TTS_API != "magpie" or not MAGPIE_TTS_URL or voice not in VOICES or lang not in PREVIEW_TEXT:
+        raise HTTPException(404, "no preview for that voice")
+    key = (voice, lang)
+    if key not in _previews:
+        form = aiohttp.FormData()
+        form.add_field("language", MAGPIE_LOCALE[lang])
+        form.add_field("text", PREVIEW_TEXT[lang])
+        form.add_field("voice", f"Magpie-Multilingual.{MAGPIE_LOCALE[lang].upper()}.{voice}")
+        form.add_field("sample_rate_hz", "22050")
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
+            async with http.post(f"{MAGPIE_TTS_URL}/audio/synthesize", data=form) as r:
+                if r.status != 200:
+                    raise HTTPException(502, f"voice service: HTTP {r.status}")
+                _previews[key] = await r.read()
+    return Response(_previews[key], media_type="audio/wav", headers={"cache-control": "public, max-age=86400"})
 
 
 @app.post("/api/token")
@@ -104,8 +132,8 @@ async def token(req: JoinRequest):
     jwt = (api.AccessToken(API_KEY, API_SECRET)
            .with_identity(identity)
            .with_name(req.name.strip())
-           .with_attributes({"speak": req.speak, "hear": req.hear,
-                             "voice": "male" if req.voice == "male" else "female"})
+           .with_attributes({"speak": req.speak, "hear": req.hear, "voice": voice_id(req.voice),
+                             "bnr": "on" if req.bnr else "off"})
            .with_ttl(timedelta(hours=4))
            .with_grants(api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True,
                                         can_publish_data=True, can_update_own_metadata=True))

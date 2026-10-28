@@ -101,6 +101,8 @@ output { float: right; font-weight: 500; color: var(--text); }
 
 .switch { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 10px; cursor: pointer; }
 .switch input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+#bnr-field { margin: 0 0 14px; }
+#bnr-field .hint { margin: -4px 0 0 28px; }   /* under the label text, past the checkbox */
 
 .btn {
   font: inherit; font-weight: 600; cursor: pointer; border-radius: 10px; padding: 10px 16px;

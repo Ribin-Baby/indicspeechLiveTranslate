@@ -66,9 +66,35 @@ SCRIPT = {code: "DEVANAGARI" for code in ("brx", "doi", "hi", "kok", "mai", "mr"
 }
 
 
+# ---------------------------------------------------------------- voices
+# Each caller picks the voice the others hear them in. indic-speak (TTS_API=indic-speak) has a
+# recommended female and male voice per language. Magpie (TTS_API=magpie) has named speakers
+# per locale: these are the ones that exist in every locale the call can be heard in (en-US and
+# hi-IN), so a caller's voice works whatever language a listener picks. NVIDIA doesn't publish
+# their genders; these come from their measured pitch (YIN, English and Hindi, 2026-10-28):
+# female 194-240 Hz average, male 139-177 Hz.
+TTS_API = os.environ.get("TTS_API", "indic-speak")
+MAGPIE_LOCALE = {"en": "en-US", "hi": "hi-IN"}            # the call languages Magpie voices
+_MAGPIE_VOICES = {"Louise": "female", "Aria": "female", "Sofia": "female", "Isabela": "female", "Leo": "female",
+                  "Jason": "male", "Pascal": "male", "Diego": "male"}
+VOICES = _MAGPIE_VOICES if TTS_API == "magpie" else {"female": "female", "male": "male"}
+DEFAULT_VOICE = ({"female": os.environ.get("MAGPIE_FEMALE_VOICE", "Louise"), "male": os.environ.get("MAGPIE_MALE_VOICE", "Jason")}
+                 if TTS_API == "magpie" else {"female": "female", "male": "male"})
+
+
+def voice_id(v: str | None) -> str:
+    """A caller's voice choice: one of VOICES, "female"/"male" for that gender's default."""
+    return v if v in VOICES else DEFAULT_VOICE.get(v or "", DEFAULT_VOICE["female"])
+
+
 def describe() -> dict:
     return {
         "speak": [{"code": c, "name": LANGUAGES[c][0], "native": LANGUAGES[c][1]} for c in SPEAK],
         "hear": [{"code": c, "name": LANGUAGES[c][0], "native": LANGUAGES[c][1],
                   "preview": LANGUAGES[c][2] == "preview"} for c in HEAR],
+        "voices": [{"id": v, "name": v.capitalize(), "gender": g} for v, g in VOICES.items()],
+        "default_voice": DEFAULT_VOICE,
+        "voice_preview": TTS_API == "magpie",
+        # background noise removal (the agent's bnr.py), which each caller can turn off for their mic
+        "noise_removal": bool(os.environ.get("BNR_GRPC_URL")),
     }

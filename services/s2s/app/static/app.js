@@ -8,8 +8,8 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   room: null,
-  me: null,               // {identity, name, speak, hear, voice}
-  langs: { speak: [], hear: [] },
+  me: null,               // {identity, name, speak, hear, voice, bnr}
+  langs: { speak: [], hear: [], voices: [], default_voice: {} },
   names: {},              // code -> English name
   utts: new Map(),        // utterance id -> bubble
   playQueue: [],          // partner utterances whose translated audio is still to play, in order
@@ -30,11 +30,6 @@ const store = {
 };
 
 const langName = (code) => state.names[code] || code || "?";
-const radioValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value || "female";
-const setRadio = (name, value) => {
-  const r = document.querySelector(`input[name="${name}"][value="${value}"]`);
-  if (r) r.checked = true;
-};
 
 // ------------------------------------------------------------------ dialogs (invoker commands fallback)
 // Native `command`/`commandfor` buttons open and close the settings dialog; older
@@ -158,7 +153,11 @@ async function loadLanguages() {
   fillSelect($("hear"), state.langs.hear, store.get("hear", speak));
   fillSelect($("speak-live"), state.langs.speak);
   fillSelect($("hear-live"), state.langs.hear);
-  setRadio("voice", store.get("voice", "female"));
+  fillVoices($("voice"), store.get("voice", "female"));
+  fillVoices($("voice-live"));
+  for (const b of document.querySelectorAll(".voice-play")) b.hidden = !state.langs.voice_preview;
+  $("bnr-field").hidden = !state.langs.noise_removal;
+  $("bnr-live").checked = store.get("bnr", "1") === "1";
   $("name").value = store.get("name", "");
   const params = new URLSearchParams(location.search);
   $("room").value = params.get("room") || store.get("room", "") || newRoomName();
@@ -168,6 +167,35 @@ async function loadLanguages() {
 }
 
 function newRoomName() { return "call-" + Math.random().toString(36).slice(2, 7); }
+
+// ------------------------------------------------------------------ voices
+// A stored "female"/"male" (the choice before named voices) means that gender's default voice.
+const voiceId = (v) => (state.langs.voices.some((x) => x.id === v) ? v
+  : state.langs.default_voice[v] || state.langs.default_voice.female);
+const voiceName = (v) => state.langs.voices.find((x) => x.id === v)?.name || v;
+
+function fillVoices(sel, value) {
+  sel.replaceChildren(...[["female", "Female voices"], ["male", "Male voices"]].map(([gender, label]) => {
+    const group = document.createElement("optgroup");
+    group.label = label;
+    group.append(...state.langs.voices.filter((v) => v.gender === gender).map((v) => new Option(v.name, v.id)));
+    return group;
+  }).filter((g) => g.children.length));
+  if (value) sel.value = voiceId(value);
+}
+
+// A short sample of the chosen voice, in the caller's own language.
+let preview = null;
+function playVoice(btn) {
+  preview?.pause();
+  const lang = (state.me?.speak || $("speak").value) === "hi" ? "hi" : "en";
+  preview = new Audio(`/api/voice-preview?voice=${encodeURIComponent($(btn.dataset.for).value)}&lang=${lang}`);
+  btn.disabled = true;
+  const done = () => { btn.disabled = false; };
+  preview.addEventListener("ended", done, { once: true });
+  preview.addEventListener("pause", done, { once: true });
+  preview.play().catch((e) => { done(); toast(`Could not play the voice sample: ${e.message}`); });
+}
 
 // ------------------------------------------------------------------ pre-join mic check
 async function startMicTest() {
@@ -212,7 +240,7 @@ async function join(ev) {
   btn.textContent = "Joining...";
   $("join-error").hidden = true;
   const req = { name: $("name").value.trim(), room: $("room").value.trim(),
-                speak: $("speak").value, hear: $("hear").value, voice: radioValue("voice") };
+                speak: $("speak").value, hear: $("hear").value, voice: $("voice").value, bnr: $("bnr-live").checked };
   const micId = state.testMic ? $("mic-device").value : store.get("mic", "");
   for (const k of ["name", "room", "speak", "hear", "voice"]) store.set(k, req[k]);
   if (micId) store.set("mic", micId);
@@ -223,7 +251,7 @@ async function join(ev) {
                                           body: JSON.stringify(req) });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     const { token, identity, room: roomName } = await r.json();
-    state.me = { identity, name: req.name, speak: req.speak, hear: req.hear, voice: req.voice };
+    state.me = { identity, name: req.name, speak: req.speak, hear: req.hear, voice: req.voice, bnr: req.bnr };
 
     const room = new Room({ adaptiveStream: true, dynacast: true,
       audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true,
@@ -589,17 +617,24 @@ function onTranslationLevel(v) {
 function syncSettingsForm() {
   $("speak-live").value = state.me.speak;
   $("hear-live").value = state.me.hear;
-  setRadio("voice-live", state.me.voice);
+  $("voice-live").value = voiceId(state.me.voice);
+  $("bnr-live").checked = state.me.bnr;
 }
 
-async function updateAttributes() {
+async function updateAttributes(e) {
   if (!state.room) return;
-  const attrs = { speak: $("speak-live").value, hear: $("hear-live").value, voice: radioValue("voice-live") };
-  Object.assign(state.me, attrs);
+  const bnr = $("bnr-live").checked;
+  const attrs = { speak: $("speak-live").value, hear: $("hear-live").value, voice: $("voice-live").value,
+                  bnr: bnr ? "on" : "off" };
+  Object.assign(state.me, attrs, { bnr });
   for (const k of ["speak", "hear", "voice"]) store.set(k, attrs[k]);
+  store.set("bnr", bnr ? "1" : "0");
   await state.room.localParticipant.setAttributes(attrs);
   renderPeople();
-  toast(`You speak ${langName(attrs.speak)} and hear ${langName(attrs.hear)}.`, { key: "langs" });
+  const changed = e?.target?.id;
+  toast(changed === "voice-live" ? `The others now hear you in ${voiceName(attrs.voice)}'s voice.`
+    : changed === "bnr-live" ? `Background noise removal is ${bnr ? "on" : "off"} for your microphone.`
+    : `You speak ${langName(attrs.speak)} and hear ${langName(attrs.hear)}.`, { key: "langs" });
 }
 
 async function refreshDevices() {
@@ -638,7 +673,9 @@ $("hear").addEventListener("change", () => { state.hearTouched = true; });
 
 $("speak-live").addEventListener("change", updateAttributes);
 $("hear-live").addEventListener("change", updateAttributes);
-document.querySelectorAll('input[name="voice-live"]').forEach((r) => r.addEventListener("change", updateAttributes));
+$("voice-live").addEventListener("change", updateAttributes);
+$("bnr-live").addEventListener("change", updateAttributes);
+document.querySelectorAll(".voice-play").forEach((b) => b.addEventListener("click", () => playVoice(b)));
 $("mic-live").addEventListener("change", (e) => switchDevice("audioinput", e.target.value));
 $("speaker-live").addEventListener("change", (e) => switchDevice("audiooutput", e.target.value));
 document.querySelector('button[commandfor="settings"][command="show-modal"]').addEventListener("click", refreshDevices);

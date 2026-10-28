@@ -381,7 +381,7 @@ the current ones):
 |---|---|---|
 | `ASR_URL` | Parakeet, `http://127.0.0.1:8001` | IndicConformer NIM, same address and API |
 | `TRANSLATE_API`, `TRANSLATE_URL`, `TRANSLATE_MODEL` | `chat`, Qwen's `/v1` URL, `qwen3.8-27b` (from `S2S_TRANSLATE_API`, `S2S_TRANSLATE_URL`, `S2S_TRANSLATE_MODEL` in `.env`); without those, `riva`, `http://127.0.0.1:8002` | `openai`, `http://127.0.0.1:8002/v1`, `indic-translate` |
-| `TTS_API` | `magpie` (`MAGPIE_TTS_URL`; voices `MAGPIE_FEMALE_VOICE` Louise, `MAGPIE_MALE_VOICE` Leo) | `indic-speak` (`TTS_URL`) |
+| `TTS_API` | `magpie` (`MAGPIE_TTS_URL`; each caller picks a voice, and `MAGPIE_FEMALE_VOICE` / `MAGPIE_MALE_VOICE` set the defaults, Louise and Jason) | `indic-speak` (`TTS_URL`) |
 | `S2S_SPEAK_LANGUAGES`, `S2S_HEAR_LANGUAGES` | `en,hi` | unset: every language the models cover |
 | `BNR_GRPC_URL` (`BNR_INTENSITY`, default 1.0) | the Maxine BNR NIM (`host:8001`): noise removal on | the same; unset: off |
 
@@ -395,8 +395,9 @@ with different mics. Pick a name, your language and the language to hear the
 other person in, check your mic, and join; the **Invite** button copies the room
 link for the other person. In the call, each person's ring pulses with their
 voice, and each caption shows its state (listening, translating, playing) and
-its delay. **Settings** changes languages, voice, mic and speaker devices,
-volumes, and whether captions show the English step and the original words. The certificate comes
+its delay. **Settings** changes languages, your voice (with a **Play** sample), background
+noise removal for your mic, mic and speaker devices, volumes, and whether captions show the
+English step and the original words. The certificate comes
 from Caddy's local CA, so browsers warn once. To remove the warning, trust its
 root certificate:
 
@@ -408,11 +409,24 @@ On a machine that can't reach `10.79.252.124` directly, testing needs that
 address routable. Reaching the call from the internet needs a TURN server and a
 real certificate; neither is set up yet.
 
-**Language choice.** Each caller has three participant attributes: `speak` (now English or
-Hindi; with the own models, the languages with an ASR model: Malayalam, Hindi, Kannada,
-Telugu, Tamil), `hear` (now English or Hindi; with the own models, the 22 Indian languages
-plus English) and `voice` (female | male, the voice the *other* person hears them in). They're set at join time and can be changed mid-call from the page. The agent
-restarts that caller's speech recognition or retargets translation on the fly. If a
+**Language, voice and noise removal.** Each caller has four participant attributes. They're
+set at join time and can be changed mid-call from the page's settings.
+
+- `speak`: now English or Hindi. With the own models, the languages with an ASR model:
+  Malayalam, Hindi, Kannada, Telugu, Tamil.
+- `hear`: now English or Hindi. With the own models, the 22 Indian languages plus English.
+- `voice`: the voice the *other* people hear them in (`languages.VOICES`).
+  - With Magpie, it's one of the speakers that exist in every language the call can be heard
+    in: Louise, Aria, Sofia, Isabela or Leo (female), Jason, Pascal or Diego (male).
+  - NVIDIA doesn't publish their genders; these groups come from each voice's measured pitch.
+    Leo, despite the name, measures 216–235 Hz, so the default male voice is Jason.
+  - The page's **Play** button fetches a short sample (`GET /api/voice-preview`).
+  - With the own models, the choice is `female` or `male` (indic-speak's recommended voices).
+- `bnr`: `on` or `off`, background noise removal for this caller's mic. On by default; offered
+  only when `BNR_GRPC_URL` is set.
+
+The agent restarts that caller's speech recognition (new language or noise removal) or
+retargets translation and voice on the fly. If a
 listener's `hear` equals the speaker's `speak`, nothing is translated and the page
 plays the speaker's own voice. Otherwise the page plays only the translation; an
 "original voice" slider can mix the speaker's own voice back in.

@@ -51,12 +51,14 @@
         <select id="hear"></select>
       </div>
     </div>
-    <fieldset class="field segmented" aria-describedby="voice-hint">
-      <legend>My voice, as the other person hears it</legend>
-      <label><input type="radio" name="voice" value="female" checked><span>Female</span></label>
-      <label><input type="radio" name="voice" value="male"><span>Male</span></label>
-    </fieldset>
-    <p id="voice-hint" class="hint">Your words are spoken to them by a studio voice in their language.</p>
+    <div class="field">
+      <label for="voice">My voice, as the others hear it</label>
+      <div class="input-row">
+        <select id="voice" aria-describedby="voice-hint"></select>
+        <button type="button" class="btn ghost small voice-play" data-for="voice" aria-label="Play a sample of this voice">Play</button>
+      </div>
+    </div>
+    <p id="voice-hint" class="hint">Your words are spoken to them in this voice, in their language.</p>
 
     <div class="field mic-check">
       <label for="mic-device">Microphone</label>
@@ -136,14 +138,23 @@
       <div class="field"><label for="speak-live">My language</label><select id="speak-live"></select></div>
       <div class="field"><label for="hear-live">Hear the other person in</label><select id="hear-live"></select></div>
     </div>
-    <fieldset class="field segmented">
-      <legend>My voice, as the other person hears it</legend>
-      <label><input type="radio" name="voice-live" value="female"><span>Female</span></label>
-      <label><input type="radio" name="voice-live" value="male"><span>Male</span></label>
-    </fieldset>
+    <div class="field">
+      <label for="voice-live">My voice, as the others hear it</label>
+      <div class="input-row">
+        <select id="voice-live"></select>
+        <button type="button" class="btn ghost small voice-play" data-for="voice-live" aria-label="Play a sample of this voice">Play</button>
+      </div>
+    </div>
     <p class="hint">Changes apply from your next sentence.</p>
 
     <h3>Audio</h3>
+    <div id="bnr-field" hidden>
+      <label class="switch">
+        <input type="checkbox" id="bnr-live" checked aria-describedby="bnr-hint">
+        <span>Remove background noise from my microphone</span>
+      </label>
+      <p class="hint" id="bnr-hint">Fans, traffic and keyboard noise are taken out before your words are recognised, so noisy rooms translate better. Adds about 0.07 s.</p>
+    </div>
     <div class="field"><label for="mic-live">Microphone</label><select id="mic-live"></select></div>
     <div class="field" id="speaker-field"><label for="speaker-live">Speaker</label><select id="speaker-live"></select></div>
     <div class="field">
