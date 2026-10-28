@@ -384,6 +384,7 @@ the current ones):
 | `TTS_API` | `magpie` (`MAGPIE_TTS_URL`; each caller picks a voice, and `MAGPIE_FEMALE_VOICE` / `MAGPIE_MALE_VOICE` set the defaults, Louise and Jason) | `indic-speak` (`TTS_URL`) |
 | `S2S_SPEAK_LANGUAGES`, `S2S_HEAR_LANGUAGES` | `en,hi` | unset: every language the models cover |
 | `BNR_GRPC_URL` (`BNR_INTENSITY`, default 1.0) | the Maxine BNR NIM (`host:8001`): noise removal on | the same; unset: off |
+| `S2S_VAD_MIN_SILENCE_MS`, `S2S_PHRASE_S`, `S2S_BREATH_MS` | 350 ms pause ends an utterance; after 3 s of speech, a 200 ms breath does | the same |
 
 **Sharing a LiveKit server.** The agent registers as `indic-s2s` (`S2S_AGENT_NAME`) and joins
 only rooms that ask for it by that name: the web app puts the request in every caller's
@@ -522,8 +523,9 @@ speaker stops talking:
 | translated speech starts (agent) | 0.87–0.92 s | 0.89–0.99 s |
 | translated speech heard (other caller, after WebRTC) | 1.12–1.14 s | 1.04 s |
 
-Most of what is left is the 0.5 s pause that ends an utterance (`S2S_VAD_MIN_SILENCE_MS`)
-and translation (~0.3 s); Magpie's first audio takes ~50 ms.
+Most of what is left is the pause that ends an utterance (`S2S_VAD_MIN_SILENCE_MS`, 0.5 s
+when this was measured, 0.35 s now, see below) and translation (~0.3 s); Magpie's first audio
+takes ~50 ms.
 
 **Qwen as the translator** (`S2S_TRANSLATE_API=chat`, qwen3.8-27b, three runs each, back to
 back with Riva on 2026-10-27): heard after 1.36–1.41 s (Hindi → English) and 1.50–1.53 s
@@ -536,6 +538,29 @@ recognition slips:
 |---|---|---|
 | Hindi clip ("…पहला पाठ पढ़िए", recognized with slips) | "…Please open your books and read the first page." | "…read the first letter" / "…increase the first poem" |
 | "Can we move the launch review to Friday at three…?" | "क्या हम लॉन्च रिव्यू को शुक्रवार को दोपहर तीन बजे पर शिफ्ट कर सकते हैं?" | "क्या हम दोपहर तीन बजे शुक्रवार को लॉन्च समीक्षा स्थानांतरित कर सकते हैं?" (formal) |
+
+**Shorter pauses, trimmed voice and catch-up** (2026-10-28, with Qwen and noise removal on):
+
+- *Shorter pause.* A 350 ms pause ends an utterance, down from 500 ms
+  (`S2S_VAD_MIN_SILENCE_MS`).
+- *Breath cut.* Once someone has talked for 3 s, a 200 ms breath ends it too (`S2S_PHRASE_S`,
+  `S2S_BREATH_MS`; `vad.SegmenterConfig.phrase_s`). Before, a monologue whose sentences
+  were 0.35 s apart was only cut at the 15 s limit, and each 15 s block became ~17 s of Hindi.
+- *Trimmed voice.* Magpie's silence before and after each clip is trimmed: speech starts
+  sooner, and clips played back to back no longer add 0.3–0.4 s of dead air
+  (`speech.SilenceTrimmer`).
+- *Catch-up.* A translation that had to wait for the previous one plays faster without changing
+  the pitch: 1.06× from a 0.3 s wait, 1.2× at 1 s, up to 1.4× from 2 s (`speech.time_stretch`,
+  as in meetmind). The `catch_up` field in `metrics` shows the rate used.
+
+| | Before | After |
+|---|---|---|
+| Hindi → English call, heard after (2 runs) | 1.45–1.47 s | the first sentence plays while the second is still being spoken; the last one starts 0.68–0.71 s after the speaker stops |
+| English → Hindi call, heard after (2 runs) | 1.52–1.55 s | **1.22 s** |
+| Final transcript after the speaker stops | 0.63–0.70 s | 0.33 s in long sentences, ~0.46 s in short ones |
+| Long English turn heard in Hindi (`clients/long_turn_test.py`, 35 s, 11 sentences): pieces it was cut into | 3 | 9, all at sentence ends |
+| ... worst delay of a piece | 17.4 s | 4.7 s |
+| ... translated speech still playing after the speaker stopped | 22.8 s | 4.8 s |
 
 **With the own model stack** (`clients/call_test.py`, 2026-10-26):
 

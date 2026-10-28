@@ -51,6 +51,11 @@ class SegmenterConfig:
     speech_pad_ms: int = 200         # audio kept before speech start / after speech end
     min_speech_ms: int = 200         # shorter blips are dropped ("haan" is ~250 ms)
     max_segment_s: float = 15.0      # force a cut so a monologue still produces finals
+    # In long speech a shorter pause ends the utterance too: once it has run phrase_s, a breath
+    # of breath_ms between sentences cuts it, so a monologue is translated sentence by sentence
+    # instead of in 15 s blocks (whose translations then queue up). 0 = off.
+    phrase_s: float = 0.0
+    breath_ms: int = 200
 
 
 @dataclass
@@ -164,7 +169,10 @@ class Segmenter:
                 self._reset()                       # a blip, not speech
                 return events
 
-        if self.confirmed and self.silence_ms >= cfg.min_silence_ms:
+        pause_ms = cfg.min_silence_ms
+        if cfg.phrase_s and self._ms(self.pos - self.seg_start) >= cfg.phrase_s * 1000:
+            pause_ms = min(pause_ms, cfg.breath_ms)
+        if self.confirmed and self.silence_ms >= pause_ms:
             events += self._end(forced=False, trim_silence=True)
         elif self.confirmed and self._ms(self.pos - self.seg_start) >= cfg.max_segment_s * 1000:
             events += self._end(forced=True, trim_silence=False)

@@ -48,6 +48,7 @@ from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 from .asr import AsrStream
 from .bnr import BNR_GRPC_URL, BnrStream
 from .languages import HEAR, MAGPIE_LOCALE, PROMPT_NAME, SCRIPT, SPEAK, VOICES, voice_id
+from .speech import SilenceTrimmer, catch_up_rate, time_stretch
 
 log = logging.getLogger("s2s")
 
@@ -62,7 +63,7 @@ TRANSLATE_API = os.environ.get("TRANSLATE_API", "openai")
 TTS_API = os.environ.get("TTS_API", "indic-speak")
 MAGPIE_TTS_URL = os.environ.get("MAGPIE_TTS_URL", "http://127.0.0.1:9000/v1").rstrip("/")
 ASR_PARTIALS = os.environ.get("S2S_ASR_PARTIALS", "1") == "1"
-VAD_MIN_SILENCE_MS = int(os.environ.get("S2S_VAD_MIN_SILENCE_MS", "500"))
+VAD_MIN_SILENCE_MS = int(os.environ.get("S2S_VAD_MIN_SILENCE_MS", "350"))
 # Echo protection. A browser cancels echo from its own speaker only. Two devices in one
 # room, or a speaker loud enough to beat the browser, feed translated speech back into a
 # microphone, where it is transcribed and translated again, back and forth. The worker
@@ -441,6 +442,12 @@ class Playback:
         self.utt = utt
         self.chunks: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.tts: dict = {}                                       # the TTS "done" stats
+        self.ready_at: float | None = None                        # when its first audio arrived
+
+    def put(self, chunk: bytes):
+        if self.ready_at is None:
+            self.ready_at = time.time()
+        self.chunks.put_nowait(chunk)
 
 
 class ListenerOutput:
@@ -466,12 +473,33 @@ class ListenerOutput:
         self.queue.put_nowait(pb)
         return pb
 
+    async def _audio(self, pb: Playback):
+        """The utterance's audio. If it had to wait for the previous one to play out (counting
+        what's still buffered in the track), it's sped up to catch up, pitch unchanged."""
+        first = await pb.chunks.get()
+        if first is None:
+            return
+        waited_ms = (time.time() + self.source.queued_duration - (pb.ready_at or time.time())) * 1000
+        rate = catch_up_rate(waited_ms)
+        if rate <= 1:
+            yield first
+            while (chunk := await pb.chunks.get()) is not None:
+                yield chunk
+            return
+        parts = [first]
+        while (chunk := await pb.chunks.get()) is not None:
+            parts.append(chunk)
+        pcm = b"".join(parts)
+        pb.tts["catch_up"] = rate
+        log.debug("%s for %s waited %.0f ms: %.2fx faster", pb.utt.id, self.identity, waited_ms, rate)
+        yield time_stretch(np.frombuffer(pcm[: len(pcm) // 2 * 2], np.int16), rate, OUT_SR).tobytes()
+
     async def _play(self):
         frame_bytes = OUT_FRAME * 2
         while True:
             pb = await self.queue.get()
             pending = b""
-            while (chunk := await pb.chunks.get()) is not None:
+            async for chunk in self._audio(pb):
                 pending += chunk
                 n = len(pending) // frame_bytes * frame_bytes
                 for i in range(0, n, frame_bytes):
@@ -544,7 +572,7 @@ class Synthesizer:
             async for msg in ws:
                 if isinstance(msg, bytes):
                     for pb in playbacks:
-                        pb.chunks.put_nowait(msg)
+                        pb.put(msg)
                     continue
                 m = json.loads(msg)
                 if m["type"] == "error":
@@ -591,7 +619,8 @@ class MagpieSynthesizer:
             form.add_field("text", text)
             form.add_field("voice", f"Magpie-Multilingual.{locale.upper()}.{voice_id(voice)}")
             form.add_field("sample_rate_hz", str(OUT_SR))
-            t0, size, stats = time.perf_counter(), 0, {}
+            t0, size, sent, stats = time.perf_counter(), 0, 0, {}
+            trim = SilenceTrimmer(OUT_SR)                      # without Magpie's padding around the speech
             async with self.http.post(f"{MAGPIE_TTS_URL}/audio/synthesize_online", data=form) as r:
                 if r.status != 200 or "json" in r.headers.get("content-type", ""):
                     raise RuntimeError(f"Magpie: HTTP {r.status} {(await r.text())[:200]}")
@@ -599,9 +628,16 @@ class MagpieSynthesizer:
                     if not size:
                         stats["ttfa_ms"] = round((time.perf_counter() - t0) * 1000)
                     size += len(chunk)
-                    for pb in playbacks:
-                        pb.chunks.put_nowait(chunk)
-            stats["audio_ms"] = round(size / 2 / OUT_SR * 1000)
+                    if out := trim.feed(chunk):
+                        sent += len(out)
+                        for pb in playbacks:
+                            pb.put(out)
+            if out := trim.end():
+                sent += len(out)
+                for pb in playbacks:
+                    pb.put(out)
+            stats["audio_ms"] = round(sent / 2 / OUT_SR * 1000)
+            stats["trimmed_ms"] = round((size // 2 - sent // 2) / OUT_SR * 1000)
             for pb in playbacks:
                 pb.tts = stats
         except Exception:  # noqa: BLE001
@@ -963,6 +999,7 @@ class CallTranslator:
             "translation_done_ms": ms(utt.marks.get(f"translated:{lang}")),
             "audio_start_ms": ms(first_audio),                       # translated speech starts playing
             "audio_s": round(tts.get("audio_ms", 0) / 1000, 2), "tts_ttfa_ms": tts.get("ttfa_ms"),
+            "catch_up": tts.get("catch_up", 1.0),                    # played this much faster to catch up
             "vad_pause_ms": VAD_MIN_SILENCE_MS,
         }
         log.info("utterance %s -> %s: %s", utt.id, listener, json.dumps(metrics))

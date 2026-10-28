@@ -33,6 +33,9 @@ log = logging.getLogger("s2s.asr")
 ASR_URL = os.environ.get("ASR_URL", "http://127.0.0.1:8001")         # the NIM's HTTP API
 PARTIAL_INTERVAL_S = float(os.environ.get("S2S_ASR_PARTIAL_INTERVAL_S", "0.5"))
 MAX_SEGMENT_S = 15.0            # force a cut in a monologue so finals keep coming
+# after this much speech, a breath this long also ends the utterance (vad.SegmenterConfig.phrase_s)
+PHRASE_S = float(os.environ.get("S2S_PHRASE_S", "3.0"))
+BREATH_MS = int(os.environ.get("S2S_BREATH_MS", "200"))
 _vad: SileroVAD | None = None
 
 
@@ -73,7 +76,8 @@ class AsrStream:
     def __init__(self, http: aiohttp.ClientSession, lang: str, partials: bool, min_silence_ms: int):
         self.http, self.lang, self.partials = http, lang, partials
         self.seg = Segmenter(shared_vad(), SegmenterConfig(min_silence_ms=min_silence_ms,
-                                                           max_segment_s=MAX_SEGMENT_S))
+                                                           max_segment_s=MAX_SEGMENT_S,
+                                                           phrase_s=PHRASE_S, breath_ms=BREATH_MS))
         self.events: asyncio.Queue[dict] = asyncio.Queue()
         self.segment_id = 0
         self.last_partial_at = 0          # samples into the utterance when the last partial was taken
