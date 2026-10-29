@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The architecture of the live call translator as deployed (release v1.5). Open in a browser. -->
+<title>Indic Live Translation Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+body { margin: 0; }
+/* Layout: one reading column (~72ch) that widens for the three diagrams; tables scroll inside their own frames. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #17212b;
+  --muted: #586675;
+  --line: #d3dae2;
+  --accent: #2557c9;          /* the signal path */
+  --accent-soft: #e4ecfb;
+  --zone-vm: #eef3fb;
+  --zone-gpu: #f6f1e7;
+  --zone-ink: #3e4a57;
+  --seg-pause: #d6dce4;
+  --seg-asr: #c4e2d2;
+  --seg-mt: #f1d39b;
+  --seg-tts: #d5c9ef;
+  --seg-net: #c9dcf4;
+  --seg-ink: #121a22;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161e27; --ink: #e5ecf2; --muted: #9aa8b6; --line: #2b3745;
+    --accent: #84a6ff; --accent-soft: #1d2b46; --zone-vm: #142033; --zone-gpu: #241f17; --zone-ink: #b9c4cf;
+    --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161e27; --ink: #e5ecf2; --muted: #9aa8b6; --line: #2b3745;
+  --accent: #84a6ff; --accent-soft: #1d2b46; --zone-vm: #142033; --zone-gpu: #241f17; --zone-ink: #b9c4cf;
+  --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--ink);
+  font: 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 1120px; margin: 0 auto; display: grid; gap: 56px; }
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; font-stretch: 85%; letter-spacing: -0.01em; }
+h2 { font-size: 1.55rem; font-weight: 700; font-stretch: 90%; }
+h3 { font-size: 1.1rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 16px; min-width: 0; }
+header { display: grid; gap: 14px; }
+.lede { font-size: 1.12rem; color: var(--muted); max-width: 70ch; }
+
+.facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.fact { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; display: grid; }
+.fact b { font-family: var(--font-display); font-size: 1.15rem; font-stretch: 90%; }
+.fact span { font-size: 0.82rem; color: var(--muted); }
+
+figure { margin: 0; display: grid; gap: 10px; }
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; padding: 12px; }
+.diagram svg { display: block; width: 100%; height: auto; min-width: 760px; color: var(--ink); }
+.timeline svg { min-width: 640px; }
+figcaption { font-size: 0.9rem; color: var(--muted); max-width: 80ch; }
+
+/* system map */
+.zone-vm { fill: var(--zone-vm); stroke: var(--line); }
+.zone-gpu { fill: var(--zone-gpu); stroke: var(--line); }
+.zone-label { fill: var(--zone-ink); font: 600 12px var(--font-mono); letter-spacing: 0.04em; }
+.node { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.node.key { stroke: var(--accent); stroke-width: 2; }
+.node.standby { stroke-dasharray: 5 4; }
+.n-title { fill: var(--ink); font: 700 13px var(--font-body); }
+.n-sub { fill: var(--muted); font: 11.5px var(--font-body); }
+.n-step { fill: var(--ink); font: 11.5px var(--font-body); }
+.n-num { fill: var(--accent); font: 600 11px var(--font-mono); }
+.wire { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.wire.signal { stroke: var(--accent); stroke-width: 2; }
+.wire.dashed { stroke-dasharray: 5 4; }
+.w-label { fill: var(--muted); font: 11px var(--font-body); }
+.arrowhead { fill: var(--muted); }
+.arrowhead.signal { fill: var(--accent); }
+
+/* timeline */
+.tick { stroke: var(--line); }
+.tick-label { fill: var(--muted); font: 11px var(--font-mono); }
+.bar-label { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.bar-sub { fill: var(--muted); font: 11px var(--font-body); }
+.seg-text { fill: var(--seg-ink); font: 600 11px var(--font-body); }
+.s-pause { fill: var(--seg-pause); } .s-asr { fill: var(--seg-asr); } .s-mt { fill: var(--seg-mt); }
+.s-tts { fill: var(--seg-tts); } .s-net { fill: var(--seg-net); }
+.heard { stroke: var(--accent); stroke-width: 2; }
+.heard-label { fill: var(--accent); font: 700 12px var(--font-body); }
+
+/* sentence path */
+.path { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; counter-reset: step; }
+.stage { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; gap: 4px 14px; padding: 14px 0; border-top: 1px solid var(--line); align-items: baseline; }
+.stage::before { counter-increment: step; content: counter(step, decimal-leading-zero); font: 500 0.85rem var(--font-mono); color: var(--accent); }
+.stage h3 { grid-column: 2; }
+.stage .where { grid-column: 3; grid-row: 1; font: 0.78rem var(--font-mono); color: var(--muted); text-align: right; white-space: nowrap; }
+.stage > p, .stage > ul { grid-column: 2 / 4; color: var(--ink); }
+.stage .time { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); }
+.lane { font: 600 0.75rem var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 18px 0 4px; }
+@media (max-width: 560px) {
+  .stage { grid-template-columns: 2rem minmax(0, 1fr); }
+  .stage .where { grid-column: 2; grid-row: auto; text-align: left; white-space: normal; }
+  .stage > p, .stage > ul { grid-column: 2; }
+}
+
+/* tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+th { font: 700 0.78rem var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 700; min-width: 11rem; }
+td code { white-space: nowrap; }
+.tag { display: inline-block; font: 600 0.72rem var(--font-mono); padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; vertical-align: 1px; }
+
+ul.notes { margin: 0; padding-left: 1.2rem; display: grid; gap: 8px; max-width: 80ch; }
+footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--line); padding-top: 18px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <p class="eyebrow">Architecture · as deployed 29 Oct 2026 · release v1.5</p>
+    <h1>Indic Live Translation Pipeline</h1>
+    <p class="lede">Two people join a LiveKit call, each speaking their own language. An agent listens to every microphone, cleans the audio, recognises the words, translates them, and speaks the translation into a track only the listener receives, with live captions alongside. Calls currently use English and Hindi.</p>
+    <div class="facts" role="list">
+      <div class="fact" role="listitem"><b>~1.2 s</b><span>speaker stops → listener hears (English → Hindi)</span></div>
+      <div class="fact" role="listitem"><b>5 models</b><span>noise removal, ASR, 2 translators, TTS</span></div>
+      <div class="fact" role="listitem"><b>3 machines</b><span>this VM + two GPU hosts</span></div>
+      <div class="fact" role="listitem"><b>21.5 / 46 GB</b><span>GPU memory used on this VM</span></div>
+    </div>
+  </header>
+
+  <section aria-labelledby="map">
+    <div class="prose">
+      <h2 id="map">System map</h2>
+    </div>
+    <figure>
+      <div class="diagram">
+        <svg viewBox="0 0 1100 600" role="img" aria-label="System map: the caller's browser reaches the HTTPS proxy and LiveKit on this VM; the s2s-agent on this VM receives every mic from LiveKit and calls noise removal and Magpie on one GPU host, Qwen on another, and Parakeet and the standby Riva translator on this VM's GPU, then sends each listener's translation track back through LiveKit.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead signal" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- zones -->
+          <rect class="zone-vm" x="200" y="30" width="525" height="550" rx="10"/>
+          <text class="zone-label" x="216" y="54">THIS VM · 10.79.252.124 · L40S</text>
+          <rect class="zone-gpu" x="800" y="30" width="290" height="300" rx="10"/>
+          <text class="zone-label" x="816" y="54">GPU HOST · NOISE REMOVAL + SPEECH</text>
+          <rect class="zone-gpu" x="800" y="360" width="290" height="220" rx="10"/>
+          <text class="zone-label" x="816" y="384">GPU HOST · TRANSLATION</text>
+
+          <!-- browser -->
+          <rect class="node" x="10" y="200" width="160" height="150" rx="8"/>
+          <text class="n-title" x="22" y="224">Caller's browser</text>
+          <text class="n-sub" x="22" y="246">call page + settings</text>
+          <text class="n-sub" x="22" y="266">mic → WebRTC (Opus)</text>
+          <text class="n-sub" x="22" y="286">plays only its own</text>
+          <text class="n-sub" x="22" y="304">translation track</text>
+          <text class="n-sub" x="22" y="324">captions, latency</text>
+
+          <!-- this VM -->
+          <rect class="node" x="225" y="80" width="210" height="60" rx="8"/>
+          <text class="n-title" x="237" y="104">HTTPS proxy · Caddy</text>
+          <text class="n-sub" x="237" y="124">:8443 · page, /rtc</text>
+
+          <rect class="node" x="490" y="80" width="210" height="60" rx="8"/>
+          <text class="n-title" x="502" y="104">s2s-web</text>
+          <text class="n-sub" x="502" y="124">:8090 · page, tokens, voices</text>
+
+          <rect class="node" x="225" y="210" width="210" height="110" rx="8"/>
+          <text class="n-title" x="237" y="234">LiveKit SFU</text>
+          <text class="n-sub" x="237" y="254">meetmind's server, shared</text>
+          <text class="n-sub" x="237" y="274">:7880 signalling</text>
+          <text class="n-sub" x="237" y="294">UDP 50000–50200 media</text>
+
+          <rect class="node key" x="490" y="180" width="210" height="220" rx="8"/>
+          <text class="n-title" x="502" y="204">s2s-agent · indic-s2s</text>
+          <text class="n-num" x="502" y="230">1</text><text class="n-step" x="518" y="230">echo cancellation</text>
+          <text class="n-num" x="502" y="252">2</text><text class="n-step" x="518" y="252">noise removal (client)</text>
+          <text class="n-num" x="502" y="274">3</text><text class="n-step" x="518" y="274">voice detection</text>
+          <text class="n-num" x="502" y="296">4</text><text class="n-step" x="518" y="296">speech recognition (client)</text>
+          <text class="n-num" x="502" y="318">5</text><text class="n-step" x="518" y="318">translate per language</text>
+          <text class="n-num" x="502" y="340">6</text><text class="n-step" x="518" y="340">speak once per language</text>
+          <text class="n-num" x="502" y="362">7</text><text class="n-step" x="518" y="362">per-listener playback</text>
+          <text class="n-sub" x="502" y="386">captions → data channel</text>
+
+          <rect class="node" x="225" y="480" width="210" height="60" rx="8"/>
+          <text class="n-title" x="237" y="504">Parakeet 1.1B · ASR</text>
+          <text class="n-sub" x="237" y="524">:8001 · Riva, this GPU</text>
+
+          <rect class="node standby" x="490" y="480" width="210" height="60" rx="8"/>
+          <text class="n-title" x="502" y="504">Riva Translate 1.6B</text>
+          <text class="n-sub" x="502" y="524">:8002 · default, standby</text>
+
+          <!-- GPU hosts -->
+          <rect class="node" x="815" y="80" width="260" height="60" rx="8"/>
+          <text class="n-title" x="827" y="104">Maxine BNR · noise removal</text>
+          <text class="n-sub" x="827" y="124">gRPC :8001 · 48 kHz, 10 ms chunks</text>
+
+          <rect class="node" x="815" y="230" width="260" height="60" rx="8"/>
+          <text class="n-title" x="827" y="254">Magpie TTS Multilingual</text>
+          <text class="n-sub" x="827" y="274">HTTP :9000 · 48 kHz PCM, streamed</text>
+
+          <rect class="node key" x="815" y="430" width="260" height="60" rx="8"/>
+          <text class="n-title" x="827" y="454">Qwen qwen3.8-27b · vLLM</text>
+          <text class="n-sub" x="827" y="474">:8000 · live translator</text>
+
+          <!-- wires -->
+          <polyline class="wire" points="90,200 90,110 225,110" marker-end="url(#ah)"/>
+          <text class="w-label" x="98" y="100">HTTPS :8443</text>
+          <line class="wire signal" x1="170" y1="270" x2="225" y2="270" marker-start="url(#ahs)" marker-end="url(#ahs)"/>
+          <text class="w-label" x="176" y="262">media</text>
+
+          <line class="wire" x1="435" y1="110" x2="490" y2="110" marker-end="url(#ah)"/>
+          <text class="w-label" x="441" y="102">/api</text>
+          <line class="wire" x1="330" y1="140" x2="330" y2="210" marker-end="url(#ah)"/>
+          <text class="w-label" x="338" y="180">/rtc (wss)</text>
+
+          <line class="wire signal" x1="435" y1="240" x2="490" y2="240" marker-end="url(#ahs)"/>
+          <text class="w-label" x="441" y="232">mics</text>
+          <line class="wire signal" x1="490" y1="296" x2="435" y2="296" marker-end="url(#ahs)"/>
+          <text class="w-label" x="441" y="312">tracks,</text>
+          <text class="w-label" x="441" y="326">captions</text>
+
+          <polyline class="wire signal" points="700,252 760,252 760,110 815,110" marker-start="url(#ahs)" marker-end="url(#ahs)"/>
+          <text class="w-label" x="706" y="244">mic audio</text>
+          <line class="wire signal" x1="700" y1="270" x2="815" y2="270" marker-end="url(#ahs)"/>
+          <text class="w-label" x="706" y="288">text → speech</text>
+          <polyline class="wire signal" points="700,385 760,385 760,460 815,460" marker-end="url(#ahs)"/>
+          <text class="w-label" x="706" y="377">translate</text>
+
+          <polyline class="wire signal" points="545,400 545,450 330,450 330,480" marker-end="url(#ahs)"/>
+          <text class="w-label" x="345" y="442">utterance → text</text>
+          <line class="wire dashed" x1="640" y1="400" x2="640" y2="480" marker-end="url(#ah)"/>
+          <text class="w-label" x="648" y="444">alternative</text>
+        </svg>
+      </div>
+      <figcaption>Blue lines carry the call's audio and text. The agent is the only component that talks to the models. It sends noise removal, recognition and speech per caller, and translation per listener language. The dashed Riva translator is the repo default and stands by; this deployment uses Qwen. LiveKit, Parakeet, Riva and Magpie are shared with meetmind, which runs its own calls on the same servers.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="path">
+    <div class="prose">
+      <h2 id="path">One sentence, end to end</h2>
+      <p>What happens between Ben saying a sentence in English and Asha hearing it in Hindi. Every caller is a speaker and a listener at once; the agent runs this path for each of them.</p>
+    </div>
+    <ol class="path">
+      <li class="lane" aria-hidden="true">Speaker's browser</li>
+      <li class="stage">
+        <h3>Microphone to LiveKit</h3><span class="where">browser → LiveKit</span>
+        <p>The page captures the mic with the browser's echo cancellation, noise suppression and gain control, and publishes it over WebRTC (Opus). LiveKit forwards it to the agent.</p>
+      </li>
+      <li class="lane" aria-hidden="true">Agent: listening</li>
+      <li class="stage">
+        <h3>Echo cancellation</h3><span class="where">agent · CPU</span>
+        <p>The agent receives the mic at 16 kHz in 20 ms frames. WebRTC AEC3 removes anything the agent itself played into the room, using its own playout as the reference. An echo monitor finds the echo delay and switches the cleaned audio in only while playout is actually leaking into that mic. <span class="time">~0 ms</span></p>
+      </li>
+      <li class="stage">
+        <h3>Background noise removal</h3><span class="where">agent → Maxine BNR</span>
+        <p>The audio goes up to 48 kHz, streams to NVIDIA's BNR model in 10 ms chunks over one gRPC stream per caller, and comes back down to 16 kHz. It removes fans, traffic and keyboard noise, and each caller can turn it off in Settings. If the model is unreachable or stalls for 0.5 s, the raw mic is used instead. <span class="time">~13 ms round trip + 40 ms model lookahead</span></p>
+      </li>
+      <li class="stage">
+        <h3>Voice detection</h3><span class="where">agent · Silero VAD, CPU</span>
+        <p>Silero VAD scores each 32 ms frame. The utterance ends at the first of these, keeping 200 ms of padding around it:</p>
+        <ul class="notes">
+          <li>a 350 ms pause;</li>
+          <li>once someone has talked for 3 s, a 200 ms breath, so a long monologue is translated sentence by sentence;</li>
+          <li>a hard cut at 15 s.</li>
+        </ul>
+        <p><span class="time">0.2–0.35 s of silence</span></p>
+      </li>
+      <li class="stage">
+        <h3>Speech recognition</h3><span class="where">agent → Parakeet</span>
+        <p>The whole utterance goes to Parakeet 1.1B (offline mode) in one HTTP request. While the person is still talking, the utterance so far is re-transcribed every 0.5 s for live captions. <span class="time">~50 ms per request</span></p>
+      </li>
+      <li class="stage">
+        <h3>Echo check</h3><span class="where">agent · CPU</span>
+        <p>The agent compares the utterance's loudness with what it played into the room. A score of 0.72 or more is treated as echo and dropped, and so is 0.5 or more when the utterance repeats words that were just played. Otherwise it goes on.</p>
+      </li>
+      <li class="lane" aria-hidden="true">Agent: translating and speaking</li>
+      <li class="stage">
+        <h3>Translation</h3><span class="where">agent → Qwen</span>
+        <p>The utterance is translated once per listener language, all languages in parallel.</p>
+        <ul class="notes">
+          <li>Qwen gets an interpreter instruction with thinking turned off.</li>
+          <li>A sentence end mark is added first, which stops it swapping names in unpunctuated text.</li>
+          <li>Its reply streams into the listener's captions as it's written.</li>
+          <li>Letters copied over in the wrong script are respelled.</li>
+          <li>Riva Translate can take over with one setting: about 0.3 s faster, but weaker Hindi → English.</li>
+        </ul>
+        <p><span class="time">~0.5–0.7 s for a sentence</span></p>
+      </li>
+      <li class="stage">
+        <h3>Speech</h3><span class="where">agent → Magpie</span>
+        <p>Magpie speaks the translation once per language, in the voice the speaker chose, streaming 48 kHz audio. Everyone hearing that language gets copies of the same audio. Magpie's silence before and after the speech is trimmed as it streams. <span class="time">~50 ms to first audio</span></p>
+      </li>
+      <li class="stage">
+        <h3>Playback</h3><span class="where">agent → LiveKit</span>
+        <p>Each listener has a queue that plays translations in order, on their own track <code>translation-&lt;listener&gt;</code>. LiveKit permissions let only that listener subscribe to it.</p>
+        <p>A translation that had to wait for the one before is sped up without changing the pitch: 1.06× after a 0.3 s wait, 1.2× at 1 s, up to 1.4×.</p>
+      </li>
+      <li class="lane" aria-hidden="true">Listener's browser</li>
+      <li class="stage">
+        <h3>Listener hears it</h3><span class="where">LiveKit → browser</span>
+        <p>The page plays the translation track. The speaker's own voice is muted by default, and a slider can mix it back in. Captions show the original words, the translation, its state and its delay. <span class="time">~0.1–0.2 s WebRTC delivery</span></p>
+      </li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="time">
+    <div class="prose">
+      <h2 id="time">Where the time goes</h2>
+      <p>Measured on 28 Oct 2026 with simulated callers in real time (<code>clients/call_test_en_hi.py</code>). Each bar starts when the speaker stops talking.</p>
+    </div>
+    <figure class="timeline">
+      <div class="diagram">
+        <svg viewBox="0 0 900 230" role="img" aria-label="Timeline: English to Hindi, a 4.8 second sentence: the 200 ms breath, then noise removal and recognition until 335 ms, Qwen translation until 1040 ms, Magpie first audio at 1101 ms, heard by the listener at 1220 ms. Hindi to English with the 350 ms pause: recognised at 476 ms, translated at 957 ms, speech starts at 997 ms, heard at 1190 ms.">
+          <!-- scale: 0..1300 ms -> x 70..870 (0.6154 px per ms) -->
+          <line class="tick" x1="70" y1="30" x2="70" y2="200"/><text class="tick-label" x="70" y="218" text-anchor="middle">0</text>
+          <line class="tick" x1="193" y1="30" x2="193" y2="200"/><text class="tick-label" x="193" y="218" text-anchor="middle">0.2 s</text>
+          <line class="tick" x1="316" y1="30" x2="316" y2="200"/><text class="tick-label" x="316" y="218" text-anchor="middle">0.4 s</text>
+          <line class="tick" x1="439" y1="30" x2="439" y2="200"/><text class="tick-label" x="439" y="218" text-anchor="middle">0.6 s</text>
+          <line class="tick" x1="562" y1="30" x2="562" y2="200"/><text class="tick-label" x="562" y="218" text-anchor="middle">0.8 s</text>
+          <line class="tick" x1="685" y1="30" x2="685" y2="200"/><text class="tick-label" x="685" y="218" text-anchor="middle">1.0 s</text>
+          <line class="tick" x1="808" y1="30" x2="808" y2="200"/><text class="tick-label" x="808" y="218" text-anchor="middle">1.2 s</text>
+
+          <!-- bar 1: English -> Hindi, long sentence: breath cut -->
+          <text class="bar-label" x="70" y="22">English → Hindi · 4.8 s sentence (200 ms breath cut)</text>
+          <rect class="s-pause" x="70" y="34" width="123" height="40"/>
+          <text class="seg-text" x="78" y="58">breath 0.2 s</text>
+          <rect class="s-asr" x="193" y="34" width="83" height="40"/>
+          <text class="seg-text" x="199" y="58">BNR + ASR</text>
+          <rect class="s-mt" x="276" y="34" width="434" height="40"/>
+          <text class="seg-text" x="284" y="58">Qwen translation · 0.71 s</text>
+          <rect class="s-tts" x="710" y="34" width="37" height="40"/>
+          <text class="seg-text" x="713" y="58">TTS</text>
+          <rect class="s-net" x="747" y="34" width="73" height="40"/>
+          <text class="seg-text" x="751" y="58">WebRTC</text>
+          <line class="heard" x1="820" y1="28" x2="820" y2="80"/>
+          <text class="heard-label" x="826" y="58">1.22 s</text>
+          <text class="bar-sub" x="70" y="94">transcript 0.34 s · translated 1.04 s · speech starts 1.10 s · heard 1.22 s</text>
+
+          <!-- bar 2: Hindi -> English, short sentence: 350 ms pause -->
+          <text class="bar-label" x="70" y="124">Hindi → English · 350 ms pause (measured before the breath cut)</text>
+          <rect class="s-pause" x="70" y="136" width="215" height="40"/>
+          <text class="seg-text" x="78" y="160">pause 0.35 s</text>
+          <rect class="s-asr" x="285" y="136" width="78" height="40"/>
+          <text class="seg-text" x="291" y="160">BNR + ASR</text>
+          <rect class="s-mt" x="363" y="136" width="296" height="40"/>
+          <text class="seg-text" x="371" y="160">Qwen translation · 0.48 s</text>
+          <rect class="s-tts" x="659" y="136" width="25" height="40"/>
+          <rect class="s-net" x="684" y="136" width="119" height="40"/>
+          <text class="seg-text" x="690" y="160">TTS + WebRTC</text>
+          <line class="heard" x1="803" y1="130" x2="803" y2="182"/>
+          <text class="heard-label" x="809" y="160">1.19 s</text>
+          <text class="bar-sub" x="70" y="196">transcript 0.48 s · translated 0.96 s · speech starts 1.00 s · heard 1.19 s</text>
+        </svg>
+      </div>
+      <figcaption>Translation is the largest step. With Riva instead of Qwen the same sentences were heard about 0.3 s sooner, with weaker Hindi → English. In long turns the breath cut keeps the listener close behind: a 35 s English monologue now ends with 4.8 s of Hindi still to play, against 22.8 s before v1.5 (<code>clients/long_turn_test.py</code>).</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="components">
+    <h2 id="components">Components</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Component</th><th>What it does</th><th>Runs on</th><th>Interface</th><th>Code / config</th></tr></thead>
+        <tbody>
+          <tr><td>Call page</td><td>Join form, mic check, plays its own translation track, captions, settings (languages, voice with a Play sample, noise removal, devices, volumes)</td><td>caller's browser, served from this VM</td><td>HTTPS, WebRTC, LiveKit data channel</td><td><code>services/s2s/app/static/</code></td></tr>
+          <tr><td>HTTPS proxy</td><td>TLS with Caddy's local CA; <code>/rtc</code> to LiveKit, everything else to s2s-web</td><td>this VM <code>:8443</code></td><td>HTTPS, wss</td><td><code>services/proxy/Caddyfile</code></td></tr>
+          <tr><td>s2s-web</td><td>Serves the page. <code>POST /api/token</code> issues a LiveKit token carrying the caller's settings and a request for the agent. Also serves <code>/api/languages</code> and <code>/api/voice-preview</code>, and runs a watchdog that re-dispatches the agent to its own rooms if it drops out</td><td>this VM <code>127.0.0.1:8090</code></td><td>HTTP</td><td><code>app/web.py</code>, <code>app/languages.py</code></td></tr>
+          <tr><td>LiveKit SFU</td><td>Routes media and data. It belongs to meetmind and accepts both apps' API keys</td><td>this VM <code>:7880</code>, UDP 50000–50200, TCP 7881</td><td>WebRTC</td><td>meetmind <code>infra/livekit.yaml</code></td></tr>
+          <tr><td>s2s-agent</td><td>The pipeline above; joins only rooms that ask for <code>indic-s2s</code></td><td>this VM (host network)</td><td>LiveKit Agents worker</td><td><code>app/agent.py</code></td></tr>
+          <tr><td>Noise removal<span class="tag">BNR</span></td><td>NVIDIA Maxine BNR v2, 48 kHz profile</td><td>speech GPU host <code>:8001</code> (<code>BNR_GRPC_URL</code>)</td><td>gRPC <code>EnhanceAudio</code> stream</td><td><code>app/bnr.py</code>, <code>BNR_GRPC_URL</code></td></tr>
+          <tr><td>Speech recognition</td><td>NVIDIA Parakeet 1.1B RNNT multilingual, offline mode</td><td>this VM's GPU, <code>meetmind-gpu-asr</code> <code>:8001</code></td><td><code>POST /v1/audio/transcriptions</code></td><td><code>app/asr.py</code>, <code>ASR_URL</code></td></tr>
+          <tr><td>Translation<span class="tag">live</span></td><td>Qwen <code>qwen3.8-27b</code> on vLLM, with an interpreter instruction</td><td>translation GPU host <code>:8000</code> (<code>S2S_TRANSLATE_URL</code>)</td><td>OpenAI chat completions, streamed</td><td><code>ChatTranslateClient</code>, <code>S2S_TRANSLATE_*</code></td></tr>
+          <tr><td>Translation<span class="tag">standby</span></td><td>NVIDIA Riva Translate 1.6B, 36 languages, any direction</td><td>this VM's GPU, <code>meetmind-gpu-nmt</code> <code>:8002</code></td><td><code>POST /v1/text/translations</code></td><td><code>RivaTranslateClient</code></td></tr>
+          <tr><td>Speech</td><td>NVIDIA Magpie TTS Multilingual; eight voices that exist in both English and Hindi</td><td>speech GPU host <code>:9000</code> (<code>MAGPIE_TTS_URL</code>)</td><td><code>POST /v1/audio/synthesize_online</code></td><td><code>MagpieSynthesizer</code>, <code>MAGPIE_TTS_URL</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="settings">
+    <h2 id="settings">What each caller sets</h2>
+    <p class="prose">These are LiveKit participant attributes. They're chosen on the join screen, can be changed in Settings during the call, and the agent applies a change from the next sentence.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Values</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>speak</code></td><td>English, Hindi</td><td>Language their speech is recognised in. A change restarts their recognition.</td></tr>
+          <tr><td><code>hear</code></td><td>English, Hindi</td><td>Language their translation track is in. If it matches the speaker's language, the page plays the speaker's own voice instead.</td></tr>
+          <tr><td><code>voice</code></td><td>Female: Louise, Aria, Sofia, Isabela, Leo · Male: Jason, Pascal, Diego</td><td>The voice the others hear them in. Grouped by measured pitch, because NVIDIA publishes no genders; defaults are Louise and Jason.</td></tr>
+          <tr><td><code>bnr</code></td><td>on (default), off</td><td>Background noise removal on their own microphone. A change restarts their recognition with or without it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="data">
+    <h2 id="data">What the page receives</h2>
+    <p class="prose">The agent sends JSON messages on the <code>captions</code> data topic to everyone in the room:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Message</th><th>Sent when</th><th>Carries</th></tr></thead>
+        <tbody>
+          <tr><td><code>transcript</code></td><td>every 0.5 s while someone talks, then once at the end</td><td>speaker, language, text, partial or final, whether it was dropped as echo</td></tr>
+          <tr><td><code>translation</code></td><td>as the translation is written, then once complete</td><td>utterance, language, text, partial or final, time taken</td></tr>
+          <tr><td><code>metrics</code></td><td>when a listener's translated speech finishes</td><td>time after speech end to the final transcript, the translation and the speech starting; audio length; voice's first audio; catch-up rate</td></tr>
+          <tr><td><code>status</code></td><td>whenever callers or settings change</td><td>every caller's name, languages, voice and noise-removal setting</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="fail">
+    <h2 id="fail">When something fails</h2>
+    <ul class="notes">
+      <li><b>Noise removal down or slow:</b> that mic falls back to raw audio within 0.5 s; the call carries on.</li>
+      <li><b>A translation or voice request fails:</b> it's logged and reported in the page's status, and the next sentence goes through normally.</li>
+      <li><b>The agent restarts or crashes mid-call:</b> it leaves within 5 s. The web app's watchdog checks every 5 s and re-dispatches it to any of its rooms left without a translator for 8 s. Calls lose translation for ~10–15 s.</li>
+      <li><b>Echo:</b> two devices in one room, or a loud speaker, can feed translations back into a mic. Echo cancellation and the echo check stop the translation from bouncing back and forth.</li>
+      <li><b>Sharing LiveKit with meetmind:</b> the agent joins only rooms whose tokens ask for <code>indic-s2s</code>, and meetmind ignores rooms it doesn't know. Restarting meetmind's LiveKit drops calls in both apps.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="config">
+    <h2 id="config">Configuration</h2>
+    <p class="prose">This repo's <code>.env</code> sets <code>COMPOSE_FILE=docker-compose.yml:docker-compose.shared.yml</code>, so <code>docker compose up -d</code> starts only the agent, the web app and the proxy, using the models above. Removing that line runs the repo's own model stack instead: IndicConformer, indic-translate and indic-speak, with 5 languages to speak and 23 to hear.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Setting</th><th>Now</th><th>What it controls</th></tr></thead>
+        <tbody>
+          <tr><td><code>ASR_URL</code></td><td><code>http://127.0.0.1:8001</code></td><td>Speech recognition server</td></tr>
+          <tr><td><code>BNR_GRPC_URL</code>, <code>BNR_INTENSITY</code></td><td>BNR host <code>:8001</code>, 1.0</td><td>Noise removal; unset turns it off for everyone</td></tr>
+          <tr><td><code>S2S_TRANSLATE_API</code>, <code>_URL</code>, <code>_MODEL</code></td><td><code>chat</code>, Qwen host <code>/v1</code>, <code>qwen3.8-27b</code></td><td>Translator; unset uses Riva at <code>127.0.0.1:8002</code></td></tr>
+          <tr><td><code>TTS_API</code>, <code>MAGPIE_TTS_URL</code></td><td><code>magpie</code>, Magpie host <code>/v1</code></td><td>Speech server and the voice list</td></tr>
+          <tr><td><code>S2S_VAD_MIN_SILENCE_MS</code></td><td>350</td><td>Pause that ends an utterance</td></tr>
+          <tr><td><code>S2S_PHRASE_S</code>, <code>S2S_BREATH_MS</code></td><td>3.0, 200</td><td>After this much speech, this short a breath also ends it</td></tr>
+          <tr><td><code>S2S_SPEAK_LANGUAGES</code>, <code>S2S_HEAR_LANGUAGES</code></td><td><code>en,hi</code></td><td>Languages offered on the page</td></tr>
+          <tr><td><code>S2S_AGENT_NAME</code></td><td><code>indic-s2s</code></td><td>Name the agent registers under; only rooms asking for it get it</td></tr>
+          <tr><td><code>S2S_ECHO_CANCEL</code>, <code>S2S_LOG_TEXT</code></td><td>on, on</td><td>Echo protection; writing transcripts and translations to the agent log</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="code">
+    <h2 id="code">Code map</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>services/s2s/app/agent.py</code></td><td><code>CallTranslator</code> (room state, the per-utterance flow), <code>SpeakerInput</code> (mic → AEC → BNR → ASR), <code>ListenerOutput</code> (per-listener queue, catch-up), <code>MagpieSynthesizer</code>, the translators, echo monitor</td></tr>
+          <tr><td><code>services/s2s/app/bnr.py</code></td><td>Maxine BNR gRPC stream, resampling, fallback</td></tr>
+          <tr><td><code>services/s2s/app/vad.py</code>, <code>asr.py</code></td><td>Silero VAD segmenter (pause, breath cut, 15 s cap); recognition requests and live captions</td></tr>
+          <tr><td><code>services/s2s/app/speech.py</code></td><td>Silence trimming, catch-up rate, pitch-preserving speed-up (WSOLA)</td></tr>
+          <tr><td><code>services/s2s/app/languages.py</code></td><td>Languages, voices and their genders, defaults</td></tr>
+          <tr><td><code>services/s2s/app/web.py</code>, <code>static/</code></td><td>Token API, voice samples, watchdog; the call page</td></tr>
+          <tr><td><code>docker-compose.shared.yml</code></td><td>Runs the call stack on meetmind's model servers</td></tr>
+          <tr><td><code>clients/</code></td><td>Call tests: <code>call_test_en_hi.py</code>, <code>long_turn_test.py</code>, <code>asr_timing_test.py</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Source: <a href="https://github.com/Ribin-Baby/indicspeechLiveTranslate">github.com/Ribin-Baby/indicspeechLiveTranslate</a>, tag v1.5. Model servers on this VM come from meetmind's <code>deploy/gpu-host</code>.
+  </footer>
+</main>
+
+</body>
+</html>

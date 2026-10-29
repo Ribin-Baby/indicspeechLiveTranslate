@@ -28,6 +28,14 @@ naturally and hold up better against recognition slips (see
 [Translated calls](#translated-calls-livekit)). The two model servers on this GPU take
 ~22 GB (Parakeet ~12 GB, Riva Translate ~9.6 GB); the call stack itself needs no GPU.
 
+**Architecture diagram** of this pipeline: [docs/live-pipeline.html](docs/live-pipeline.html)
+(open it in a browser). It covers:
+
+- a system map of what runs where;
+- the path one sentence takes through the agent, with measured times;
+- a to-scale latency timeline;
+- the components, per-caller settings, caption messages, failure handling and configuration.
+
 ## This repo's own model stack (off for now)
 
 Remove `COMPOSE_FILE` from `.env` to run the calls on the models in this repo instead:
