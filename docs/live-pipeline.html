@@ -168,12 +168,12 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
 
 <main>
   <header>
-    <p class="eyebrow">Architecture · as deployed 29 Oct 2026 · release v1.5</p>
+    <p class="eyebrow">Architecture · as deployed 29 Oct 2026</p>
     <h1>Indic Live Translation Pipeline</h1>
     <p class="lede">Two people join a LiveKit call, each speaking their own language. An agent listens to every microphone, cleans the audio, recognises the words, translates them, and speaks the translation into a track only the listener receives, with live captions alongside. Calls currently use English and Hindi.</p>
     <div class="facts" role="list">
-      <div class="fact" role="listitem"><b>~1.2 s</b><span>speaker stops → listener hears (English → Hindi)</span></div>
-      <div class="fact" role="listitem"><b>5 models</b><span>noise removal, ASR, 2 translators, TTS</span></div>
+      <div class="fact" role="listitem"><b>~1.3 s</b><span>speaker stops → listener hears (English → Hindi)</span></div>
+      <div class="fact" role="listitem"><b>6 models</b><span>noise removal, end of turn, ASR, 2 translators, TTS</span></div>
       <div class="fact" role="listitem"><b>3 machines</b><span>this VM + two GPU hosts</span></div>
       <div class="fact" role="listitem"><b>21.5 / 46 GB</b><span>GPU memory used on this VM</span></div>
     </div>
@@ -227,7 +227,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <text class="n-title" x="502" y="204">s2s-agent · indic-s2s</text>
           <text class="n-num" x="502" y="230">1</text><text class="n-step" x="518" y="230">echo cancellation</text>
           <text class="n-num" x="502" y="252">2</text><text class="n-step" x="518" y="252">noise removal (client)</text>
-          <text class="n-num" x="502" y="274">3</text><text class="n-step" x="518" y="274">voice detection</text>
+          <text class="n-num" x="502" y="274">3</text><text class="n-step" x="518" y="274">voice + end-of-turn detection</text>
           <text class="n-num" x="502" y="296">4</text><text class="n-step" x="518" y="296">speech recognition (client)</text>
           <text class="n-num" x="502" y="318">5</text><text class="n-step" x="518" y="318">translate per language</text>
           <text class="n-num" x="502" y="340">6</text><text class="n-step" x="518" y="340">speak once per language</text>
@@ -285,7 +285,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <text class="w-label" x="648" y="444">alternative</text>
         </svg>
       </div>
-      <figcaption>Blue lines carry the call's audio and text. The agent is the only component that talks to the models. It sends noise removal, recognition and speech per caller, and translation per listener language. The dashed Riva translator is the repo default and stands by; this deployment uses Qwen. LiveKit, Parakeet, Riva and Magpie are shared with meetmind, which runs its own calls on the same servers.</figcaption>
+      <figcaption>Blue lines carry the call's audio and text. The agent is the only component that talks to the models; the end-of-turn model (Smart Turn) runs inside it, on the CPU. It sends noise removal, recognition and speech per caller, and translation per listener language. The dashed Riva translator is the repo default and stands by; this deployment uses Qwen. LiveKit, Parakeet, Riva and Magpie are shared with meetmind, which runs its own calls on the same servers.</figcaption>
     </figure>
   </section>
 
@@ -297,7 +297,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <figure>
       <p class="legend" aria-hidden="true"><span class="key k-audio"></span>speech (audio) <span class="key k-text"></span>text <span class="key k-data"></span>captions to the page <span class="key k-note"></span>work inside the agent</p>
       <div class="diagram seq">
-        <svg viewBox="0 0 1120 720" role="img" aria-label="Sequence diagram. While Ben talks, his mic audio goes through LiveKit to the agent, which cancels echo, streams it to noise removal and back, detects speech, and every 0.5 s sends the utterance so far to Parakeet for a partial caption. When Ben stops, after a 0.2 to 0.35 second pause the agent sends the whole utterance to Parakeet and gets the final text at 0.34 s, checks for echo, sends the text to Qwen once per listener language and receives the translation streamed until 1.04 s, sends it to Magpie in Ben's chosen voice and receives speech from 1.10 s, trims silence, and plays it on Asha's own track, which she hears at 1.22 s. Captions go to the page at each step.">
+        <svg viewBox="0 0 1250 770" role="img" aria-label="Sequence diagram. While Ben talks, his mic audio goes through LiveKit to the agent, which cancels echo, streams it to noise removal and back, detects speech, and every 0.5 s sends the utterance so far to Parakeet for a partial caption. When Ben stops, at a 150 ms pause the agent sends the last 8 s of audio to the Smart Turn end-of-turn model, which answers finished in about 60 ms. The agent then sends the whole utterance to Parakeet and gets the final text at 0.39 s, checks for echo, sends the text to Qwen once per listener language and receives the translation streamed until 1.09 s, sends it to Magpie in Ben's chosen voice and receives speech from 1.15 s, trims silence, and plays it on Asha's own track, which she hears at 1.28 s. Captions go to the page at each step.">
           <defs>
             <marker id="sq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-audio" d="M0,0 L10,5 L0,10 z"/></marker>
             <marker id="sq-t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-text" d="M0,0 L10,5 L0,10 z"/></marker>
@@ -309,26 +309,29 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <rect class="node" x="200" y="16" width="110" height="46" rx="7"/><text class="p-name" x="255" y="35" text-anchor="middle">LiveKit</text><text class="p-sub" x="255" y="52" text-anchor="middle">SFU</text>
           <rect class="node key" x="335" y="16" width="110" height="46" rx="7"/><text class="p-name" x="390" y="35" text-anchor="middle">s2s-agent</text><text class="p-sub" x="390" y="52" text-anchor="middle">indic-s2s</text>
           <rect class="node" x="470" y="16" width="110" height="46" rx="7"/><text class="p-name" x="525" y="35" text-anchor="middle">Maxine BNR</text><text class="p-sub" x="525" y="52" text-anchor="middle">noise removal</text>
-          <rect class="node" x="600" y="16" width="110" height="46" rx="7"/><text class="p-name" x="655" y="35" text-anchor="middle">Parakeet</text><text class="p-sub" x="655" y="52" text-anchor="middle">speech → text</text>
-          <rect class="node" x="730" y="16" width="110" height="46" rx="7"/><text class="p-name" x="785" y="35" text-anchor="middle">Qwen 27B</text><text class="p-sub" x="785" y="52" text-anchor="middle">translation</text>
-          <rect class="node" x="860" y="16" width="110" height="46" rx="7"/><text class="p-name" x="915" y="35" text-anchor="middle">Magpie</text><text class="p-sub" x="915" y="52" text-anchor="middle">text → speech</text>
-          <rect class="node" x="990" y="16" width="110" height="46" rx="7"/><text class="p-name" x="1045" y="35" text-anchor="middle">Asha</text><text class="p-sub" x="1045" y="52" text-anchor="middle">listener's browser</text>
+          <rect class="node" x="600" y="16" width="110" height="46" rx="7"/><text class="p-name" x="655" y="35" text-anchor="middle">Smart Turn</text><text class="p-sub" x="655" y="52" text-anchor="middle">end of turn · CPU</text>
+          <rect class="node" x="730" y="16" width="110" height="46" rx="7"/><text class="p-name" x="785" y="35" text-anchor="middle">Parakeet</text><text class="p-sub" x="785" y="52" text-anchor="middle">speech → text</text>
+          <rect class="node" x="860" y="16" width="110" height="46" rx="7"/><text class="p-name" x="915" y="35" text-anchor="middle">Qwen 27B</text><text class="p-sub" x="915" y="52" text-anchor="middle">translation</text>
+          <rect class="node" x="990" y="16" width="110" height="46" rx="7"/><text class="p-name" x="1045" y="35" text-anchor="middle">Magpie</text><text class="p-sub" x="1045" y="52" text-anchor="middle">text → speech</text>
+          <rect class="node" x="1120" y="16" width="110" height="46" rx="7"/><text class="p-name" x="1175" y="35" text-anchor="middle">Asha</text><text class="p-sub" x="1175" y="52" text-anchor="middle">listener's browser</text>
 
           <!-- lifelines and activations -->
-          <line class="lifeline" x1="130" y1="62" x2="130" y2="706"/>
-          <line class="lifeline" x1="255" y1="62" x2="255" y2="706"/>
-          <line class="lifeline" x1="390" y1="62" x2="390" y2="706"/>
-          <line class="lifeline" x1="525" y1="62" x2="525" y2="706"/>
-          <line class="lifeline" x1="655" y1="62" x2="655" y2="706"/>
-          <line class="lifeline" x1="785" y1="62" x2="785" y2="706"/>
-          <line class="lifeline" x1="915" y1="62" x2="915" y2="706"/>
-          <line class="lifeline" x1="1045" y1="62" x2="1045" y2="706"/>
-          <rect class="activation" x="385" y="120" width="10" height="560"/>
+          <line class="lifeline" x1="130" y1="62" x2="130" y2="756"/>
+          <line class="lifeline" x1="255" y1="62" x2="255" y2="756"/>
+          <line class="lifeline" x1="390" y1="62" x2="390" y2="756"/>
+          <line class="lifeline" x1="525" y1="62" x2="525" y2="756"/>
+          <line class="lifeline" x1="655" y1="62" x2="655" y2="756"/>
+          <line class="lifeline" x1="785" y1="62" x2="785" y2="756"/>
+          <line class="lifeline" x1="915" y1="62" x2="915" y2="756"/>
+          <line class="lifeline" x1="1045" y1="62" x2="1045" y2="756"/>
+          <line class="lifeline" x1="1175" y1="62" x2="1175" y2="756"/>
+          <rect class="activation" x="385" y="120" width="10" height="610"/>
           <rect class="activation" x="521" y="172" width="8" height="30"/>
-          <rect class="activation" x="651" y="258" width="8" height="30"/>
-          <rect class="activation" x="651" y="400" width="8" height="30"/>
-          <rect class="activation" x="781" y="496" width="8" height="32"/>
-          <rect class="activation" x="911" y="572" width="8" height="32"/>
+          <rect class="activation" x="781" y="258" width="8" height="30"/>
+          <rect class="activation" x="651" y="398" width="8" height="26"/>
+          <rect class="activation" x="781" y="450" width="8" height="30"/>
+          <rect class="activation" x="911" y="546" width="8" height="32"/>
+          <rect class="activation" x="1041" y="622" width="8" height="32"/>
 
           <!-- while Ben talks -->
           <text class="t-label" x="10" y="104">while Ben</text>
@@ -345,54 +348,59 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <text class="m-label" x="402" y="216">cleaned audio · ~53 ms later</text>
           <rect class="s-note" x="400" y="224" width="118" height="20" rx="4"/><text class="n-label" x="459" y="238" text-anchor="middle">detect speech (VAD)</text>
 
-          <rect class="loop" x="300" y="250" width="420" height="80" rx="4"/>
+          <rect class="loop" x="300" y="250" width="550" height="80" rx="4"/>
           <path class="loop-tab" d="M300,250 h168 v14 l-8,8 h-160 z"/>
           <text class="loop-label" x="306" y="264">every 0.5 s while talking</text>
-          <line class="m-audio" x1="395" y1="282" x2="651" y2="282" marker-end="url(#sq-a)"/>
+          <line class="m-audio" x1="395" y1="282" x2="781" y2="282" marker-end="url(#sq-a)"/>
           <text class="m-label" x="476" y="278">utterance so far (WAV)</text>
-          <line class="m-text" x1="651" y1="302" x2="395" y2="302" marker-end="url(#sq-t)"/>
-          <text class="m-label" x="560" y="298">partial text</text>
+          <line class="m-text" x1="781" y1="302" x2="395" y2="302" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="690" y="298">partial text</text>
           <line class="m-data" x1="385" y1="320" x2="255" y2="320" marker-end="url(#sq-d)"/>
           <text class="m-label" x="262" y="316">partial caption</text>
 
           <!-- Ben stops -->
-          <line class="stopline" x1="10" y1="352" x2="1110" y2="352"/>
+          <line class="stopline" x1="10" y1="352" x2="1240" y2="352"/>
           <text class="t-mark" x="10" y="346">Ben stops · t = 0</text>
 
-          <rect class="s-note" x="400" y="364" width="280" height="20" rx="4"/><text class="n-label" x="540" y="378" text-anchor="middle">wait for 0.35 s pause (0.2 s breath after 3 s)</text>
-          <text class="t-label" x="10" y="378">0.2–0.35 s</text>
-          <line class="m-audio" x1="395" y1="404" x2="651" y2="404" marker-end="url(#sq-a)"/>
-          <text class="m-label" x="402" y="398">whole utterance (WAV)</text>
-          <line class="m-text" x1="651" y1="426" x2="395" y2="426" marker-end="url(#sq-t)"/>
-          <text class="m-label" x="402" y="442">final text: "Hello Priya, can we move the launch review…"</text>
-          <text class="t-label" x="10" y="430">0.34 s</text>
-          <line class="m-data" x1="385" y1="456" x2="255" y2="456" marker-end="url(#sq-d)"/>
-          <text class="m-label" x="262" y="452">final caption</text>
-          <rect class="s-note" x="400" y="462" width="118" height="20" rx="4"/><text class="n-label" x="459" y="476" text-anchor="middle">echo check</text>
+          <rect class="s-note" x="400" y="364" width="190" height="20" rx="4"/><text class="n-label" x="495" y="378" text-anchor="middle">the pause reaches 150 ms</text>
+          <text class="t-label" x="10" y="378">~0.15 s</text>
+          <line class="m-audio" x1="395" y1="402" x2="651" y2="402" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="396">last 8 s of the utterance: finished?</text>
+          <line class="m-text" x1="651" y1="422" x2="395" y2="422" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="438">finished, p = 0.96 · ~60 ms</text>
 
-          <line class="m-text" x1="395" y1="500" x2="781" y2="500" marker-end="url(#sq-t)"/>
-          <text class="m-label" x="402" y="494">text + interpreter instruction, once per listener language</text>
-          <line class="m-text" x1="781" y1="524" x2="395" y2="524" marker-end="url(#sq-t)"/>
-          <text class="m-label" x="402" y="540">Hindi translation, streamed token by token</text>
-          <line class="m-data" x1="385" y1="552" x2="255" y2="552" marker-end="url(#sq-d)"/>
-          <text class="m-label" x="262" y="548">translation caption</text>
+          <line class="m-audio" x1="395" y1="454" x2="781" y2="454" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="560" y="450">whole utterance (WAV)</text>
+          <line class="m-text" x1="781" y1="476" x2="395" y2="476" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="492">final text: "Hello Priya, can we move the launch review…"</text>
+          <text class="t-label" x="10" y="480">0.39 s</text>
+          <line class="m-data" x1="385" y1="506" x2="255" y2="506" marker-end="url(#sq-d)"/>
+          <text class="m-label" x="262" y="502">final caption</text>
+          <rect class="s-note" x="400" y="512" width="118" height="20" rx="4"/><text class="n-label" x="459" y="526" text-anchor="middle">echo check</text>
 
-          <line class="m-text" x1="395" y1="576" x2="911" y2="576" marker-end="url(#sq-t)"/>
-          <text class="m-label" x="402" y="570">"क्या हम लॉन्च रिव्यू…" + Ben's chosen voice, once per language</text>
-          <text class="t-label" x="10" y="580">1.04 s</text>
-          <line class="m-audio" x1="911" y1="600" x2="395" y2="600" marker-end="url(#sq-a)"/>
-          <text class="m-label" x="402" y="616">Hindi speech · 48 kHz PCM, streamed</text>
-          <text class="t-label" x="10" y="604">1.10 s</text>
-          <rect class="s-note" x="400" y="624" width="210" height="20" rx="4"/><text class="n-label" x="505" y="638" text-anchor="middle">trim silence · speed up if queued</text>
+          <line class="m-text" x1="395" y1="550" x2="911" y2="550" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="544">text + interpreter instruction, once per listener language</text>
+          <line class="m-text" x1="911" y1="574" x2="395" y2="574" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="590">Hindi translation, streamed token by token</text>
+          <line class="m-data" x1="385" y1="602" x2="255" y2="602" marker-end="url(#sq-d)"/>
+          <text class="m-label" x="262" y="598">translation caption</text>
 
-          <line class="m-audio" x1="385" y1="660" x2="255" y2="660" marker-end="url(#sq-a)"/>
-          <text class="m-label" x="262" y="654">track translation-asha</text>
-          <line class="m-audio" x1="255" y1="684" x2="1045" y2="684" marker-end="url(#sq-a)"/>
-          <text class="m-label" x="263" y="700">Asha hears the Hindi translation (Opus)</text>
-          <text class="t-mark" x="10" y="688">1.22 s heard</text>
+          <line class="m-text" x1="395" y1="626" x2="1041" y2="626" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="620">"क्या हम लॉन्च रिव्यू…" + Ben's chosen voice, once per language</text>
+          <text class="t-label" x="10" y="630">1.09 s</text>
+          <line class="m-audio" x1="1041" y1="650" x2="395" y2="650" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="666">Hindi speech · 48 kHz PCM, streamed</text>
+          <text class="t-label" x="10" y="654">1.15 s</text>
+          <rect class="s-note" x="400" y="674" width="210" height="20" rx="4"/><text class="n-label" x="505" y="688" text-anchor="middle">trim silence · speed up if queued</text>
+
+          <line class="m-audio" x1="385" y1="710" x2="255" y2="710" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="262" y="704">track translation-asha</text>
+          <line class="m-audio" x1="255" y1="734" x2="1175" y2="734" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="263" y="750">Asha hears the Hindi translation (Opus)</text>
+          <text class="t-mark" x="10" y="738">1.28 s heard</text>
         </svg>
       </div>
-      <figcaption>Speech becomes text at Parakeet, stays text through Qwen, and becomes speech again at Magpie. The agent is the only participant that talks to the models. LiveKit forwards the captions to both callers, and the translated speech only to Asha. With more listener languages, the translation and speech steps run once per language, in parallel.</figcaption>
+      <figcaption>Speech becomes text at Parakeet, stays text through Qwen, and becomes speech again at Magpie. Smart Turn decides when a sentence is over: it runs on the agent's own CPU and answers whether Ben has finished from the sound of his last words. Unfinished, and a short sentence waits up to 0.7 s for the rest. The agent is the only participant that talks to the models. LiveKit forwards the captions to both callers, and the translated speech only to Asha. With more listener languages, the translation and speech steps run once per language, in parallel.</figcaption>
     </figure>
   </section>
 
@@ -417,14 +425,15 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         <p>The audio goes up to 48 kHz, streams to NVIDIA's BNR model in 10 ms chunks over one gRPC stream per caller, and comes back down to 16 kHz. It removes fans, traffic and keyboard noise, and each caller can turn it off in Settings. If the model is unreachable or stalls for 0.5 s, the raw mic is used instead. <span class="time">~13 ms round trip + 40 ms model lookahead</span></p>
       </li>
       <li class="stage">
-        <h3>Voice detection</h3><span class="where">agent · Silero VAD, CPU</span>
-        <p>Silero VAD scores each 32 ms frame. The utterance ends at the first of these, keeping 200 ms of padding around it:</p>
+        <h3>Voice and end-of-turn detection</h3><span class="where">agent · Silero VAD + Smart Turn, CPU</span>
+        <p>Silero VAD scores each 32 ms frame. When a pause reaches 150 ms, the agent asks Smart Turn, an 8 MB model on the CPU, whether the speaker has finished. It judges from their last 8 s of words and intonation:</p>
         <ul class="notes">
-          <li>a 350 ms pause;</li>
-          <li>once someone has talked for 3 s, a 200 ms breath, so a long monologue is translated sentence by sentence;</li>
-          <li>a hard cut at 15 s.</li>
+          <li>finished: the utterance ends at once, keeping 200 ms of padding;</li>
+          <li>unfinished: a short utterance waits up to 0.7 s for the rest, a long one the normal 0.35 s;</li>
+          <li>no answer: a 350 ms pause ends it;</li>
+          <li>a hard cut at 15 s in every case.</li>
         </ul>
-        <p><span class="time">0.2–0.35 s of silence</span></p>
+        <p><span class="time">~0.15 s pause + ~60 ms model</span></p>
       </li>
       <li class="stage">
         <h3>Speech recognition</h3><span class="where">agent → Parakeet</span>
@@ -467,53 +476,48 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
   <section aria-labelledby="time">
     <div class="prose">
       <h2 id="time">Where the time goes</h2>
-      <p>Measured on 28 Oct 2026 with simulated callers in real time (<code>clients/call_test_en_hi.py</code>). Each bar starts when the speaker stops talking.</p>
+      <p>Measured on 29 Oct 2026 with simulated callers in real time (<code>clients/call_test_en_hi.py</code>), with the end-of-turn model on. Each bar starts when the speaker stops talking.</p>
     </div>
     <figure class="timeline">
       <div class="diagram">
-        <svg viewBox="0 0 900 230" role="img" aria-label="Timeline: English to Hindi, a 4.8 second sentence: the 200 ms breath, then noise removal and recognition until 335 ms, Qwen translation until 1040 ms, Magpie first audio at 1101 ms, heard by the listener at 1220 ms. Hindi to English with the 350 ms pause: recognised at 476 ms, translated at 957 ms, speech starts at 997 ms, heard at 1190 ms.">
-          <!-- scale: 0..1300 ms -> x 70..870 (0.6154 px per ms) -->
+        <svg viewBox="0 0 900 230" role="img" aria-label="Timeline: English to Hindi, a 5.2 second sentence: the pause, noise removal, end-of-turn check and recognition until the final transcript at 385 ms, Qwen translation until 1087 ms, Magpie first audio at 1150 ms, heard by the listener at 1282 ms. Hindi to English, the first sentence of a longer turn: final transcript at 376 ms, translated at 696 ms, speech starts at 738 ms while the speaker is still talking.">
+          <!-- scale: 0..1400 ms -> x 70..870 (0.5714 px per ms) -->
           <line class="tick" x1="70" y1="30" x2="70" y2="200"/><text class="tick-label" x="70" y="218" text-anchor="middle">0</text>
-          <line class="tick" x1="193" y1="30" x2="193" y2="200"/><text class="tick-label" x="193" y="218" text-anchor="middle">0.2 s</text>
-          <line class="tick" x1="316" y1="30" x2="316" y2="200"/><text class="tick-label" x="316" y="218" text-anchor="middle">0.4 s</text>
-          <line class="tick" x1="439" y1="30" x2="439" y2="200"/><text class="tick-label" x="439" y="218" text-anchor="middle">0.6 s</text>
-          <line class="tick" x1="562" y1="30" x2="562" y2="200"/><text class="tick-label" x="562" y="218" text-anchor="middle">0.8 s</text>
-          <line class="tick" x1="685" y1="30" x2="685" y2="200"/><text class="tick-label" x="685" y="218" text-anchor="middle">1.0 s</text>
-          <line class="tick" x1="808" y1="30" x2="808" y2="200"/><text class="tick-label" x="808" y="218" text-anchor="middle">1.2 s</text>
+          <line class="tick" x1="184" y1="30" x2="184" y2="200"/><text class="tick-label" x="184" y="218" text-anchor="middle">0.2 s</text>
+          <line class="tick" x1="299" y1="30" x2="299" y2="200"/><text class="tick-label" x="299" y="218" text-anchor="middle">0.4 s</text>
+          <line class="tick" x1="413" y1="30" x2="413" y2="200"/><text class="tick-label" x="413" y="218" text-anchor="middle">0.6 s</text>
+          <line class="tick" x1="527" y1="30" x2="527" y2="200"/><text class="tick-label" x="527" y="218" text-anchor="middle">0.8 s</text>
+          <line class="tick" x1="641" y1="30" x2="641" y2="200"/><text class="tick-label" x="641" y="218" text-anchor="middle">1.0 s</text>
+          <line class="tick" x1="756" y1="30" x2="756" y2="200"/><text class="tick-label" x="756" y="218" text-anchor="middle">1.2 s</text>
+          <line class="tick" x1="870" y1="30" x2="870" y2="200"/><text class="tick-label" x="870" y="218" text-anchor="middle">1.4 s</text>
 
-          <!-- bar 1: English -> Hindi, long sentence: breath cut -->
-          <text class="bar-label" x="70" y="22">English → Hindi · 4.8 s sentence (200 ms breath cut)</text>
-          <rect class="s-pause" x="70" y="34" width="123" height="40"/>
-          <text class="seg-text" x="78" y="58">breath 0.2 s</text>
-          <rect class="s-asr" x="193" y="34" width="83" height="40"/>
-          <text class="seg-text" x="199" y="58">BNR + ASR</text>
-          <rect class="s-mt" x="276" y="34" width="434" height="40"/>
-          <text class="seg-text" x="284" y="58">Qwen translation · 0.71 s</text>
-          <rect class="s-tts" x="710" y="34" width="37" height="40"/>
-          <text class="seg-text" x="713" y="58">TTS</text>
-          <rect class="s-net" x="747" y="34" width="73" height="40"/>
-          <text class="seg-text" x="751" y="58">WebRTC</text>
-          <line class="heard" x1="820" y1="28" x2="820" y2="80"/>
-          <text class="heard-label" x="826" y="58">1.22 s</text>
-          <text class="bar-sub" x="70" y="94">transcript 0.34 s · translated 1.04 s · speech starts 1.10 s · heard 1.22 s</text>
+          <!-- bar 1: English -> Hindi -->
+          <text class="bar-label" x="70" y="22">English → Hindi · 5.2 s sentence</text>
+          <rect class="s-pause" x="70" y="34" width="220" height="40"/>
+          <text class="seg-text" x="78" y="58">pause, end-of-turn check, ASR</text>
+          <rect class="s-mt" x="290" y="34" width="401" height="40"/>
+          <text class="seg-text" x="298" y="58">Qwen translation · 0.70 s</text>
+          <rect class="s-tts" x="691" y="34" width="36" height="40"/>
+          <text class="seg-text" x="694" y="58">TTS</text>
+          <rect class="s-net" x="727" y="34" width="76" height="40"/>
+          <text class="seg-text" x="731" y="58">WebRTC</text>
+          <line class="heard" x1="803" y1="28" x2="803" y2="80"/>
+          <text class="heard-label" x="809" y="58">1.28 s</text>
+          <text class="bar-sub" x="70" y="94">transcript 0.39 s · translated 1.09 s · speech starts 1.15 s · heard 1.28 s</text>
 
-          <!-- bar 2: Hindi -> English, short sentence: 350 ms pause -->
-          <text class="bar-label" x="70" y="124">Hindi → English · 350 ms pause (measured before the breath cut)</text>
+          <!-- bar 2: Hindi -> English, first sentence of a longer turn -->
+          <text class="bar-label" x="70" y="124">Hindi → English · first sentence, voiced while the speaker is still talking</text>
           <rect class="s-pause" x="70" y="136" width="215" height="40"/>
-          <text class="seg-text" x="78" y="160">pause 0.35 s</text>
-          <rect class="s-asr" x="285" y="136" width="78" height="40"/>
-          <text class="seg-text" x="291" y="160">BNR + ASR</text>
-          <rect class="s-mt" x="363" y="136" width="296" height="40"/>
-          <text class="seg-text" x="371" y="160">Qwen translation · 0.48 s</text>
-          <rect class="s-tts" x="659" y="136" width="25" height="40"/>
-          <rect class="s-net" x="684" y="136" width="119" height="40"/>
-          <text class="seg-text" x="690" y="160">TTS + WebRTC</text>
-          <line class="heard" x1="803" y1="130" x2="803" y2="182"/>
-          <text class="heard-label" x="809" y="160">1.19 s</text>
-          <text class="bar-sub" x="70" y="196">transcript 0.48 s · translated 0.96 s · speech starts 1.00 s · heard 1.19 s</text>
+          <text class="seg-text" x="78" y="160">pause, end-of-turn check, ASR</text>
+          <rect class="s-mt" x="285" y="136" width="183" height="40"/>
+          <text class="seg-text" x="293" y="160">Qwen · 0.32 s</text>
+          <rect class="s-tts" x="468" y="136" width="24" height="40"/>
+          <line class="heard" x1="492" y1="130" x2="492" y2="182"/>
+          <text class="heard-label" x="498" y="160">speech starts 0.74 s</text>
+          <text class="bar-sub" x="70" y="196">transcript 0.38 s · translated 0.70 s · speech starts 0.74 s · the next sentence is still being spoken</text>
         </svg>
       </div>
-      <figcaption>Translation is the largest step. With Riva instead of Qwen the same sentences were heard about 0.3 s sooner, with weaker Hindi → English. In long turns the breath cut keeps the listener close behind: a 35 s English monologue now ends with 4.8 s of Hindi still to play, against 22.8 s before v1.5 (<code>clients/long_turn_test.py</code>).</figcaption>
+      <figcaption>Translation is the largest step. With Riva instead of Qwen the same sentences were heard about 0.3 s sooner, with weaker Hindi → English. The first segment holds the 150 ms pause, noise removal's ~53 ms, the end-of-turn model's ~60 ms and Parakeet's ~50 ms. Short replies end sooner than before: their final transcript arrived 478 ms after the speaker stopped, against 589 ms without the end-of-turn model. In long turns the listener stays close behind: a 35 s English monologue now ends with 3.7 s of Hindi still to play, against 22.8 s before v1.5 (<code>clients/long_turn_test.py</code>).</figcaption>
     </figure>
   </section>
 
@@ -529,7 +533,8 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <tr><td>LiveKit SFU</td><td>Routes media and data. It belongs to meetmind and accepts both apps' API keys</td><td>this VM <code>:7880</code>, UDP 50000–50200, TCP 7881</td><td>WebRTC</td><td>meetmind <code>infra/livekit.yaml</code></td></tr>
           <tr><td>s2s-agent</td><td>The pipeline above; joins only rooms that ask for <code>indic-s2s</code></td><td>this VM (host network)</td><td>LiveKit Agents worker</td><td><code>app/agent.py</code></td></tr>
           <tr><td>Noise removal<span class="tag">BNR</span></td><td>NVIDIA Maxine BNR v2, 48 kHz profile</td><td>speech GPU host <code>:8001</code> (<code>BNR_GRPC_URL</code>)</td><td>gRPC <code>EnhanceAudio</code> stream</td><td><code>app/bnr.py</code>, <code>BNR_GRPC_URL</code></td></tr>
-          <tr><td>Speech recognition</td><td>NVIDIA Parakeet 1.1B RNNT multilingual, offline mode</td><td>this VM's GPU, <code>meetmind-gpu-asr</code> <code>:8001</code></td><td><code>POST /v1/audio/transcriptions</code></td><td><code>app/asr.py</code>, <code>ASR_URL</code></td></tr>
+          <tr><td>End of turn<span class="tag">CPU</span></td><td>Pipecat Smart Turn v3.2 (BSD-2): has the speaker finished? The last 8 s of audio in, a 0–1 score out; 23 languages including Hindi</td><td>inside the agent (8 MB int8 ONNX)</td><td>ONNX Runtime, ~50–75 ms per check</td><td><code>app/turn.py</code>, <code>S2S_TURN_*</code></td></tr>
+        <tr><td>Speech recognition</td><td>NVIDIA Parakeet 1.1B RNNT multilingual, offline mode</td><td>this VM's GPU, <code>meetmind-gpu-asr</code> <code>:8001</code></td><td><code>POST /v1/audio/transcriptions</code></td><td><code>app/asr.py</code>, <code>ASR_URL</code></td></tr>
           <tr><td>Translation<span class="tag">live</span></td><td>Qwen <code>qwen3.8-27b</code> on vLLM, with an interpreter instruction</td><td>translation GPU host <code>:8000</code> (<code>S2S_TRANSLATE_URL</code>)</td><td>OpenAI chat completions, streamed</td><td><code>ChatTranslateClient</code>, <code>S2S_TRANSLATE_*</code></td></tr>
           <tr><td>Translation<span class="tag">standby</span></td><td>NVIDIA Riva Translate 1.6B, 36 languages, any direction</td><td>this VM's GPU, <code>meetmind-gpu-nmt</code> <code>:8002</code></td><td><code>POST /v1/text/translations</code></td><td><code>RivaTranslateClient</code></td></tr>
           <tr><td>Speech</td><td>NVIDIA Magpie TTS Multilingual; eight voices that exist in both English and Hindi</td><td>speech GPU host <code>:9000</code> (<code>MAGPIE_TTS_URL</code>)</td><td><code>POST /v1/audio/synthesize_online</code></td><td><code>MagpieSynthesizer</code>, <code>MAGPIE_TTS_URL</code></td></tr>
@@ -574,6 +579,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
     <h2 id="fail">When something fails</h2>
     <ul class="notes">
       <li><b>Noise removal down or slow:</b> that mic falls back to raw audio within 0.5 s; the call carries on.</li>
+      <li><b>End-of-turn model fails or answers late:</b> the pause rules decide alone (a 350 ms pause ends the utterance).</li>
       <li><b>A translation or voice request fails:</b> it's logged and reported in the page's status, and the next sentence goes through normally.</li>
       <li><b>The agent restarts or crashes mid-call:</b> it leaves within 5 s. The web app's watchdog checks every 5 s and re-dispatches it to any of its rooms left without a translator for 8 s. Calls lose translation for ~10–15 s.</li>
       <li><b>Echo:</b> two devices in one room, or a loud speaker, can feed translations back into a mic. Echo cancellation and the echo check stop the translation from bouncing back and forth.</li>
@@ -593,7 +599,8 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
           <tr><td><code>S2S_TRANSLATE_API</code>, <code>_URL</code>, <code>_MODEL</code></td><td><code>chat</code>, Qwen host <code>/v1</code>, <code>qwen3.8-27b</code></td><td>Translator; unset uses Riva at <code>127.0.0.1:8002</code></td></tr>
           <tr><td><code>TTS_API</code>, <code>MAGPIE_TTS_URL</code></td><td><code>magpie</code>, Magpie host <code>/v1</code></td><td>Speech server and the voice list</td></tr>
           <tr><td><code>S2S_VAD_MIN_SILENCE_MS</code></td><td>350</td><td>Pause that ends an utterance</td></tr>
-          <tr><td><code>S2S_PHRASE_S</code>, <code>S2S_BREATH_MS</code></td><td>3.0, 200</td><td>After this much speech, this short a breath also ends it</td></tr>
+          <tr><td><code>S2S_TURN_DETECTION</code>, <code>S2S_TURN_CHECK_MS</code>, <code>S2S_TURN_WAIT_MS</code></td><td>on, 150, 700</td><td>End-of-turn model; the pause at which it's asked; how long "unfinished" waits in a short utterance</td></tr>
+          <tr><td><code>S2S_PHRASE_S</code>, <code>S2S_BREATH_MS</code></td><td>3.0, 200</td><td>After this much speech, this short a breath also ends it (when the end-of-turn model is off)</td></tr>
           <tr><td><code>S2S_SPEAK_LANGUAGES</code>, <code>S2S_HEAR_LANGUAGES</code></td><td><code>en,hi</code></td><td>Languages offered on the page</td></tr>
           <tr><td><code>S2S_AGENT_NAME</code></td><td><code>indic-s2s</code></td><td>Name the agent registers under; only rooms asking for it get it</td></tr>
           <tr><td><code>S2S_ECHO_CANCEL</code>, <code>S2S_LOG_TEXT</code></td><td>on, on</td><td>Echo protection; writing transcripts and translations to the agent log</td></tr>
@@ -610,7 +617,8 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         <tbody>
           <tr><td><code>services/s2s/app/agent.py</code></td><td><code>CallTranslator</code> (room state, the per-utterance flow), <code>SpeakerInput</code> (mic → AEC → BNR → ASR), <code>ListenerOutput</code> (per-listener queue, catch-up), <code>MagpieSynthesizer</code>, the translators, echo monitor</td></tr>
           <tr><td><code>services/s2s/app/bnr.py</code></td><td>Maxine BNR gRPC stream, resampling, fallback</td></tr>
-          <tr><td><code>services/s2s/app/vad.py</code>, <code>asr.py</code></td><td>Silero VAD segmenter (pause, breath cut, 15 s cap); recognition requests and live captions</td></tr>
+          <tr><td><code>services/s2s/app/vad.py</code>, <code>asr.py</code></td><td>Silero VAD segmenter (pause, breath cut, end-of-turn checks, 15 s cap); recognition requests, the end-of-turn model's answers, live captions</td></tr>
+          <tr><td><code>services/s2s/app/turn.py</code></td><td>Smart Turn end-of-turn model: Whisper features in numpy, ONNX inference</td></tr>
           <tr><td><code>services/s2s/app/speech.py</code></td><td>Silence trimming, catch-up rate, pitch-preserving speed-up (WSOLA)</td></tr>
           <tr><td><code>services/s2s/app/languages.py</code></td><td>Languages, voices and their genders, defaults</td></tr>
           <tr><td><code>services/s2s/app/web.py</code>, <code>static/</code></td><td>Token API, voice samples, watchdog; the call page</td></tr>
@@ -622,7 +630,7 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
   </section>
 
   <footer>
-    Source: <a href="https://github.com/Ribin-Baby/indicspeechLiveTranslate">github.com/Ribin-Baby/indicspeechLiveTranslate</a>, tag v1.5. Model servers on this VM come from meetmind's <code>deploy/gpu-host</code>.
+    Source: <a href="https://github.com/Ribin-Baby/indicspeechLiveTranslate">github.com/Ribin-Baby/indicspeechLiveTranslate</a>, branch main. Model servers on this VM come from meetmind's <code>deploy/gpu-host</code>.
   </footer>
 </main>
 

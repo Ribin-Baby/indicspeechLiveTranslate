@@ -26,6 +26,7 @@ import aiohttp
 import numpy as np
 
 from .languages import ASR_CODE
+from .turn import MODEL_PATH as TURN_MODEL_PATH, SmartTurn
 from .vad import SR, Segmenter, SegmenterConfig, SileroVAD
 
 log = logging.getLogger("s2s.asr")
@@ -36,7 +37,15 @@ MAX_SEGMENT_S = 15.0            # force a cut in a monologue so finals keep comi
 # after this much speech, a breath this long also ends the utterance (vad.SegmenterConfig.phrase_s)
 PHRASE_S = float(os.environ.get("S2S_PHRASE_S", "3.0"))
 BREATH_MS = int(os.environ.get("S2S_BREATH_MS", "200"))
+# End-of-turn model (turn.py): asked when a pause reaches TURN_CHECK_MS (its answer takes ~50-75 ms
+# next to the call's audio work, so it lands about when the old pause rules would have acted);
+# "unfinished" waits up to TURN_WAIT_MS. Off with S2S_TURN_DETECTION=0, or when the model file is missing.
+TURN_DETECTION = os.environ.get("S2S_TURN_DETECTION", "1") == "1" and os.path.exists(TURN_MODEL_PATH)
+TURN_CHECK_MS = int(os.environ.get("S2S_TURN_CHECK_MS", "150"))
+TURN_WAIT_MS = int(os.environ.get("S2S_TURN_WAIT_MS", "700"))
+TURN_THRESHOLD = float(os.environ.get("S2S_TURN_THRESHOLD", "0.5"))
 _vad: SileroVAD | None = None
+_turn: SmartTurn | None = None
 
 
 def shared_vad() -> SileroVAD:
@@ -45,6 +54,13 @@ def shared_vad() -> SileroVAD:
     if _vad is None:
         _vad = SileroVAD()
     return _vad
+
+
+def shared_turn() -> SmartTurn:
+    global _turn
+    if _turn is None:
+        _turn = SmartTurn()
+    return _turn
 
 
 def wav_bytes(audio: np.ndarray) -> bytes:
@@ -75,30 +91,51 @@ class AsrStream:
 
     def __init__(self, http: aiohttp.ClientSession, lang: str, partials: bool, min_silence_ms: int):
         self.http, self.lang, self.partials = http, lang, partials
-        self.seg = Segmenter(shared_vad(), SegmenterConfig(min_silence_ms=min_silence_ms,
-                                                           max_segment_s=MAX_SEGMENT_S,
-                                                           phrase_s=PHRASE_S, breath_ms=BREATH_MS))
+        self.seg = Segmenter(shared_vad(), SegmenterConfig(
+            min_silence_ms=min_silence_ms, max_segment_s=MAX_SEGMENT_S, phrase_s=PHRASE_S, breath_ms=BREATH_MS,
+            turn_check_ms=TURN_CHECK_MS if TURN_DETECTION else 0, turn_wait_ms=TURN_WAIT_MS))
         self.events: asyncio.Queue[dict] = asyncio.Queue()
         self.segment_id = 0
         self.last_partial_at = 0          # samples into the utterance when the last partial was taken
         self.partial_task: asyncio.Task | None = None
         self.final_chain: asyncio.Task | None = None
+        self.turn_task: asyncio.Task | None = None
+        if TURN_DETECTION:                # load and warm the model now, not at the first pause
+            self.turn_task = asyncio.create_task(asyncio.to_thread(shared_turn().finished, np.zeros(SR, np.float32)))
 
     def feed(self, pcm16: bytes):
         x = np.frombuffer(pcm16, np.int16).astype(np.float32) / 32768.0
-        for ev in self.seg.feed(x):
+        self._handle(self.seg.feed(x))
+        if self.partials:
+            self._maybe_partial()
+
+    def _handle(self, events):
+        for ev in events:
             if ev.kind == "start":
                 self.segment_id += 1
                 self.last_partial_at = 0
                 self.events.put_nowait({"type": "speech_start", "segment_id": self.segment_id,
                                         "start_ms": ev.start_ms})
+            elif ev.kind == "turn":
+                self.turn_task = asyncio.create_task(self._turn(ev))
             else:
                 self._final(self.segment_id, ev)
-        if self.partials:
-            self._maybe_partial()
+
+    async def _turn(self, ev):
+        """Ask the end-of-turn model (in a thread: ~30 ms of CPU) and hand its answer back."""
+        t0 = time.perf_counter()
+        try:
+            p = await asyncio.get_running_loop().run_in_executor(None, shared_turn().finished, ev.audio)
+        except Exception as e:  # noqa: BLE001 - without an answer the pause rules decide alone
+            log.warning("end-of-turn model failed: %s", e)
+            return
+        finished = p >= TURN_THRESHOLD
+        log.info("end of turn? p=%.2f -> %s (%.1f s of speech, %.0f ms)", p,
+                 "finished" if finished else "unfinished", len(ev.audio) / SR, (time.perf_counter() - t0) * 1000)
+        self._handle(self.seg.turn_decided(ev.token, finished))
 
     def close(self):
-        for t in (self.partial_task, self.final_chain):
+        for t in (self.partial_task, self.final_chain, self.turn_task):
             if t is not None:
                 t.cancel()
 

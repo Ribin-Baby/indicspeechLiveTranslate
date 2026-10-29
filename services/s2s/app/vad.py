@@ -56,15 +56,23 @@ class SegmenterConfig:
     # instead of in 15 s blocks (whose translations then queue up). 0 = off.
     phrase_s: float = 0.0
     breath_ms: int = 200
+    # End-of-turn model (turn.py): once a pause reaches turn_check_ms, a "turn" event asks it
+    # whether the speaker has finished; the answer comes back through turn_decided(). Finished:
+    # the utterance ends then. Unfinished: a short utterance waits up to turn_wait_ms for the
+    # rest; a long one skips the breath cut and waits the normal min_silence_ms. Until the
+    # answer arrives, the rules above apply (without the breath cut). 0 = off.
+    turn_check_ms: int = 0
+    turn_wait_ms: int = 700
 
 
 @dataclass
 class Event:
-    kind: str                        # "start" | "end"
+    kind: str                        # "start" | "end" | "turn" (ask the end-of-turn model)
     start_ms: int
     end_ms: int = 0
-    audio: np.ndarray | None = None  # set on "end"
+    audio: np.ndarray | None = None  # set on "end"; on "turn", the utterance so far
     forced: bool = False
+    token: int = 0                   # on "turn": pass back to turn_decided()
 
 
 class Segmenter:
@@ -86,6 +94,8 @@ class Segmenter:
         self.silence_ms = 0
         self.confirmed = False                          # has a "start" been emitted
         self.in_speech = False
+        self.turn: str | None = None                    # this pause: None | "asked" | "finished" | "unfinished"
+        self.turn_token = 0
 
     @property
     def neg_threshold(self) -> float:
@@ -158,6 +168,7 @@ class Segmenter:
         if p >= self.neg_threshold:
             self.speech_ms += FRAME_MS
             self.silence_ms = 0
+            self.turn = None                            # talking again: a later pause is asked anew
         else:
             self.silence_ms += FRAME_MS
 
@@ -169,9 +180,17 @@ class Segmenter:
                 self._reset()                       # a blip, not speech
                 return events
 
+        long = bool(cfg.phrase_s) and self._ms(self.pos - self.seg_start) >= cfg.phrase_s * 1000
+        if (cfg.turn_check_ms and self.confirmed and self.turn is None
+                and self.silence_ms >= cfg.turn_check_ms):
+            self.turn, self.turn_token = "asked", self.turn_token + 1
+            events.append(Event("turn", self._ms(self.seg_start), audio=np.concatenate(self.frames),
+                                 token=self.turn_token))
         pause_ms = cfg.min_silence_ms
-        if cfg.phrase_s and self._ms(self.pos - self.seg_start) >= cfg.phrase_s * 1000:
+        if long and not cfg.turn_check_ms:
             pause_ms = min(pause_ms, cfg.breath_ms)
+        if self.turn == "unfinished" and not long:
+            pause_ms = max(pause_ms, cfg.turn_wait_ms)
         if self.confirmed and self.silence_ms >= pause_ms:
             events += self._end(forced=False, trim_silence=True)
         elif self.confirmed and self._ms(self.pos - self.seg_start) >= cfg.max_segment_s * 1000:
@@ -194,8 +213,19 @@ class Segmenter:
         self._reset()
         return [ev] if len(audio) else []
 
+    def turn_decided(self, token: int, finished: bool) -> list[Event]:
+        """The end-of-turn model's answer to the "turn" event `token`. If the speaker finished
+        and is still silent, the utterance ends now (its "end" event is returned)."""
+        if token != self.turn_token or self.turn != "asked":
+            return []                                   # stale: they spoke again, or it already ended
+        self.turn = "finished" if finished else "unfinished"
+        if finished and self.in_speech and self.confirmed and self.silence_ms > 0:
+            return self._end(forced=False, trim_silence=True)
+        return []
+
     def _reset(self):
         self.frames = []
         self.in_speech = self.confirmed = False
         self.speech_ms = self.silence_ms = 0
+        self.turn = None
         self.pre_roll.clear()

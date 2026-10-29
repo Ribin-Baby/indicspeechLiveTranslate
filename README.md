@@ -392,7 +392,8 @@ the current ones):
 | `TTS_API` | `magpie` (`MAGPIE_TTS_URL`; each caller picks a voice, and `MAGPIE_FEMALE_VOICE` / `MAGPIE_MALE_VOICE` set the defaults, Louise and Jason) | `indic-speak` (`TTS_URL`) |
 | `S2S_SPEAK_LANGUAGES`, `S2S_HEAR_LANGUAGES` | `en,hi` | unset: every language the models cover |
 | `BNR_GRPC_URL` (`BNR_INTENSITY`, default 1.0) | the Maxine BNR NIM (`host:8001`): noise removal on | the same; unset: off |
-| `S2S_VAD_MIN_SILENCE_MS`, `S2S_PHRASE_S`, `S2S_BREATH_MS` | 350 ms pause ends an utterance; after 3 s of speech, a 200 ms breath does | the same |
+| `S2S_VAD_MIN_SILENCE_MS`, `S2S_PHRASE_S`, `S2S_BREATH_MS` | 350 ms pause ends an utterance; after 3 s of speech, a 200 ms breath does (when the end-of-turn model is off) | the same |
+| `S2S_TURN_DETECTION`, `S2S_TURN_CHECK_MS`, `S2S_TURN_WAIT_MS`, `S2S_TURN_THRESHOLD` | end-of-turn model on; asked at a 150 ms pause; unfinished waits up to 700 ms; finished above 0.5 | the same |
 
 **Sharing a LiveKit server.** The agent registers as `indic-s2s` (`S2S_AGENT_NAME`) and joins
 only rooms that ask for it by that name: the web app puts the request in every caller's
@@ -569,6 +570,42 @@ recognition slips:
 | Long English turn heard in Hindi (`clients/long_turn_test.py`, 35 s, 11 sentences): pieces it was cut into | 3 | 9, all at sentence ends |
 | ... worst delay of a piece | 17.4 s | 4.7 s |
 | ... translated speech still playing after the speaker stopped | 22.8 s | 4.8 s |
+
+**End-of-turn model** (`services/s2s/app/turn.py`, 2026-10-29). Pipecat's Smart Turn v3.2
+(BSD-2, 8 MB int8 ONNX on the CPU, 23 languages including Hindi) scores from the last 8 s of an
+utterance how likely the speaker has finished. It looks at the words and the intonation
+together. The image downloads it at build time, pinned to a Hugging Face revision and
+checked against its hash.
+
+How the agent uses it (`vad.SegmenterConfig.turn_check_ms`):
+
+- When a pause reaches 150 ms, the agent asks the model.
+- **Finished** ends the utterance at once.
+- **Unfinished** waits up to 0.7 s in a short utterance. In a long one (over 3 s) it skips the
+  breath cut and waits the normal 0.35 s pause.
+- Without an answer, the pause rules decide.
+
+Its input is Whisper's log-mel spectrogram, computed in numpy. It matches transformers'
+`WhisperFeatureExtractor` to within 1e-5 and gives the same scores, so the image needs neither
+torch nor transformers. A check takes ~30 ms on its own and 50–75 ms next to a call's audio
+work.
+
+On Magpie speech, sentences whole versus cut at a word gap mid-sentence, it was right 11/12
+times in English and 9/12 in Hindi. Measured in calls, off versus on (`clients/asr_timing_test.py`,
+`call_test_en_hi.py`, `long_turn_test.py`):
+
+| | Off | On |
+|---|---|---|
+| Short replies ("Yes, Friday works for me.", "हाँ, शुक्रवार ठीक रहेगा।"): final transcript after the speaker stops, median of 8 | 589 ms | 478 ms |
+| English → Hindi call, heard after | 1.27 s | 1.28 s |
+| 35 s monologue: sentences / worst delay / translation still playing at the end | 9 / 4.7 s / 5.0 s | 12 / 4.5 s / 3.7 s |
+
+- *Monologues:* sentences under 3 s now end on their own, instead of being merged with the next.
+- *Two limits:* when it wrongly calls a finished sentence unfinished, that line waits up to
+  0.35 s longer, as it did twice in 12 complete sentences. A hesitation right after a phrase
+  that sounds complete still splits there: "मुझे लगता है… कि हमें…" came out as "I think so."
+  plus the rest.
+- *Turning it off:* `S2S_TURN_DETECTION=0` brings back the pause rules alone.
 
 **With the own model stack** (`clients/call_test.py`, 2026-10-26):
 
@@ -776,6 +813,7 @@ which is why the healthcheck sends one before reporting healthy.
 
 ## Licensing
 
+- **Smart Turn v3.2** (the end-of-turn model, `pipecat-ai/smart-turn-v3`) is BSD-2-Clause.
 - **Parakeet, Riva Translate 1.6B and Magpie TTS** (in use now) are NVIDIA models, served
   from NVIDIA's Riva and NIM containers on meetmind's servers. NVIDIA's terms for those
   containers apply, as below.

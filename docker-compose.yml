@@ -192,6 +192,11 @@ services:
       S2S_ASR_PARTIALS: ${S2S_ASR_PARTIALS:-1}
       S2S_ASR_PARTIAL_INTERVAL_S: "0.5"
       S2S_VAD_MIN_SILENCE_MS: ${S2S_VAD_MIN_SILENCE_MS:-350}   # pause that ends an utterance (was 500)
+      # End-of-turn model (Smart Turn v3.2, CPU): asked at a 150 ms pause; finished ends the
+      # utterance then, unfinished waits up to S2S_TURN_WAIT_MS. 0 = off (pause rules alone).
+      S2S_TURN_DETECTION: ${S2S_TURN_DETECTION:-1}
+      S2S_TURN_CHECK_MS: ${S2S_TURN_CHECK_MS:-150}
+      S2S_TURN_WAIT_MS: ${S2S_TURN_WAIT_MS:-700}
       S2S_ECHO_CANCEL: ${S2S_ECHO_CANCEL:-1}  # cancel the room's translated audio out of every mic
       S2S_LOG_TEXT: ${S2S_LOG_TEXT:-1}        # log transcripts and translations (debugging)
       # Background noise removal on each mic before speech recognition: NVIDIA's Maxine BNR NIM
