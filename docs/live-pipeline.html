@@ -28,6 +28,7 @@ body { margin: 0; }
   --seg-tts: #d5c9ef;
   --seg-net: #c9dcf4;
   --seg-ink: #121a22;
+  --text-msg: #a65f00;         /* text between the models */
   --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -36,14 +37,14 @@ body { margin: 0; }
   :root:not([data-theme="light"]) {
     --bg: #0f141a; --surface: #161e27; --ink: #e5ecf2; --muted: #9aa8b6; --line: #2b3745;
     --accent: #84a6ff; --accent-soft: #1d2b46; --zone-vm: #142033; --zone-gpu: #241f17; --zone-ink: #b9c4cf;
-    --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217;
+    --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217; --text-msg: #e2a64e;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f141a; --surface: #161e27; --ink: #e5ecf2; --muted: #9aa8b6; --line: #2b3745;
   --accent: #84a6ff; --accent-soft: #1d2b46; --zone-vm: #142033; --zone-gpu: #241f17; --zone-ink: #b9c4cf;
-  --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217;
+  --seg-pause: #8e99a8; --seg-asr: #7fb99c; --seg-mt: #dcb064; --seg-tts: #a996dc; --seg-net: #86a9d8; --seg-ink: #0d1217; --text-msg: #e2a64e;
   color-scheme: dark;
 }
 
@@ -96,6 +97,31 @@ figcaption { font-size: 0.9rem; color: var(--muted); max-width: 80ch; }
 .w-label { fill: var(--muted); font: 11px var(--font-body); }
 .arrowhead { fill: var(--muted); }
 .arrowhead.signal { fill: var(--accent); }
+
+/* sequence */
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin: 0; font-size: 0.85rem; color: var(--muted); }
+.key { display: inline-block; width: 26px; height: 0; border-top: 2.5px solid var(--accent); vertical-align: middle; margin-right: 6px; }
+.k-text { border-top-color: var(--text-msg); }
+.k-data { border-top: 1.5px dashed var(--muted); }
+.k-note { width: 18px; height: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 3px; }
+.seq svg { min-width: 900px; }
+.lifeline { stroke: var(--line); stroke-dasharray: 4 4; }
+.activation { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.p-name { fill: var(--ink); font: 700 12.5px var(--font-body); }
+.p-sub { fill: var(--muted); font: 10.5px var(--font-body); }
+.m-audio { stroke: var(--accent); stroke-width: 2.2; }
+.m-text { stroke: var(--text-msg); stroke-width: 2; }
+.m-data { stroke: var(--muted); stroke-width: 1.4; stroke-dasharray: 5 4; }
+.mk-audio { fill: var(--accent); } .mk-text { fill: var(--text-msg); } .mk-data { fill: var(--muted); }
+.m-label { fill: var(--ink); font: 11.5px var(--font-body); }
+.s-note { fill: var(--surface); stroke: var(--line); }
+.n-label { fill: var(--muted); font: italic 11px var(--font-body); }
+.loop { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.loop-tab { fill: var(--bg); stroke: var(--muted); stroke-width: 1; }
+.loop-label { fill: var(--muted); font: 600 10.5px var(--font-mono); }
+.stopline { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 8 5; }
+.t-label { fill: var(--muted); font: 11px var(--font-mono); }
+.t-mark { fill: var(--accent); font: 700 11.5px var(--font-mono); }
 
 /* timeline */
 .tick { stroke: var(--line); }
@@ -260,6 +286,113 @@ footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--li
         </svg>
       </div>
       <figcaption>Blue lines carry the call's audio and text. The agent is the only component that talks to the models. It sends noise removal, recognition and speech per caller, and translation per listener language. The dashed Riva translator is the repo default and stands by; this deployment uses Qwen. LiveKit, Parakeet, Riva and Magpie are shared with meetmind, which runs its own calls on the same servers.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="sequence">
+    <div class="prose">
+      <h2 id="sequence">Speech and text between the models</h2>
+      <p>The same sentence as a sequence over time: Ben speaks English, and Asha hears Hindi. Time runs down the page. The times on the left are from the English → Hindi measurement below; t = 0 is the moment Ben stops talking.</p>
+    </div>
+    <figure>
+      <p class="legend" aria-hidden="true"><span class="key k-audio"></span>speech (audio) <span class="key k-text"></span>text <span class="key k-data"></span>captions to the page <span class="key k-note"></span>work inside the agent</p>
+      <div class="diagram seq">
+        <svg viewBox="0 0 1120 720" role="img" aria-label="Sequence diagram. While Ben talks, his mic audio goes through LiveKit to the agent, which cancels echo, streams it to noise removal and back, detects speech, and every 0.5 s sends the utterance so far to Parakeet for a partial caption. When Ben stops, after a 0.2 to 0.35 second pause the agent sends the whole utterance to Parakeet and gets the final text at 0.34 s, checks for echo, sends the text to Qwen once per listener language and receives the translation streamed until 1.04 s, sends it to Magpie in Ben's chosen voice and receives speech from 1.10 s, trims silence, and plays it on Asha's own track, which she hears at 1.22 s. Captions go to the page at each step.">
+          <defs>
+            <marker id="sq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-audio" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="sq-t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-text" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="sq-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-data" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- participants -->
+          <rect class="node" x="75" y="16" width="110" height="46" rx="7"/><text class="p-name" x="130" y="35" text-anchor="middle">Ben</text><text class="p-sub" x="130" y="52" text-anchor="middle">speaker's browser</text>
+          <rect class="node" x="200" y="16" width="110" height="46" rx="7"/><text class="p-name" x="255" y="35" text-anchor="middle">LiveKit</text><text class="p-sub" x="255" y="52" text-anchor="middle">SFU</text>
+          <rect class="node key" x="335" y="16" width="110" height="46" rx="7"/><text class="p-name" x="390" y="35" text-anchor="middle">s2s-agent</text><text class="p-sub" x="390" y="52" text-anchor="middle">indic-s2s</text>
+          <rect class="node" x="470" y="16" width="110" height="46" rx="7"/><text class="p-name" x="525" y="35" text-anchor="middle">Maxine BNR</text><text class="p-sub" x="525" y="52" text-anchor="middle">noise removal</text>
+          <rect class="node" x="600" y="16" width="110" height="46" rx="7"/><text class="p-name" x="655" y="35" text-anchor="middle">Parakeet</text><text class="p-sub" x="655" y="52" text-anchor="middle">speech → text</text>
+          <rect class="node" x="730" y="16" width="110" height="46" rx="7"/><text class="p-name" x="785" y="35" text-anchor="middle">Qwen 27B</text><text class="p-sub" x="785" y="52" text-anchor="middle">translation</text>
+          <rect class="node" x="860" y="16" width="110" height="46" rx="7"/><text class="p-name" x="915" y="35" text-anchor="middle">Magpie</text><text class="p-sub" x="915" y="52" text-anchor="middle">text → speech</text>
+          <rect class="node" x="990" y="16" width="110" height="46" rx="7"/><text class="p-name" x="1045" y="35" text-anchor="middle">Asha</text><text class="p-sub" x="1045" y="52" text-anchor="middle">listener's browser</text>
+
+          <!-- lifelines and activations -->
+          <line class="lifeline" x1="130" y1="62" x2="130" y2="706"/>
+          <line class="lifeline" x1="255" y1="62" x2="255" y2="706"/>
+          <line class="lifeline" x1="390" y1="62" x2="390" y2="706"/>
+          <line class="lifeline" x1="525" y1="62" x2="525" y2="706"/>
+          <line class="lifeline" x1="655" y1="62" x2="655" y2="706"/>
+          <line class="lifeline" x1="785" y1="62" x2="785" y2="706"/>
+          <line class="lifeline" x1="915" y1="62" x2="915" y2="706"/>
+          <line class="lifeline" x1="1045" y1="62" x2="1045" y2="706"/>
+          <rect class="activation" x="385" y="120" width="10" height="560"/>
+          <rect class="activation" x="521" y="172" width="8" height="30"/>
+          <rect class="activation" x="651" y="258" width="8" height="30"/>
+          <rect class="activation" x="651" y="400" width="8" height="30"/>
+          <rect class="activation" x="781" y="496" width="8" height="32"/>
+          <rect class="activation" x="911" y="572" width="8" height="32"/>
+
+          <!-- while Ben talks -->
+          <text class="t-label" x="10" y="104">while Ben</text>
+          <text class="t-label" x="10" y="118">is talking</text>
+
+          <line class="m-audio" x1="130" y1="100" x2="255" y2="100" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="138" y="94">mic audio · Opus</text>
+          <line class="m-audio" x1="255" y1="124" x2="385" y2="124" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="263" y="118">16 kHz, 20 ms frames</text>
+          <rect class="s-note" x="400" y="134" width="118" height="20" rx="4"/><text class="n-label" x="459" y="148" text-anchor="middle">echo cancellation</text>
+          <line class="m-audio" x1="395" y1="176" x2="521" y2="176" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="170">48 kHz, 10 ms chunks</text>
+          <line class="m-audio" x1="521" y1="200" x2="395" y2="200" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="216">cleaned audio · ~53 ms later</text>
+          <rect class="s-note" x="400" y="224" width="118" height="20" rx="4"/><text class="n-label" x="459" y="238" text-anchor="middle">detect speech (VAD)</text>
+
+          <rect class="loop" x="300" y="250" width="420" height="80" rx="4"/>
+          <path class="loop-tab" d="M300,250 h168 v14 l-8,8 h-160 z"/>
+          <text class="loop-label" x="306" y="264">every 0.5 s while talking</text>
+          <line class="m-audio" x1="395" y1="282" x2="651" y2="282" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="476" y="278">utterance so far (WAV)</text>
+          <line class="m-text" x1="651" y1="302" x2="395" y2="302" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="560" y="298">partial text</text>
+          <line class="m-data" x1="385" y1="320" x2="255" y2="320" marker-end="url(#sq-d)"/>
+          <text class="m-label" x="262" y="316">partial caption</text>
+
+          <!-- Ben stops -->
+          <line class="stopline" x1="10" y1="352" x2="1110" y2="352"/>
+          <text class="t-mark" x="10" y="346">Ben stops · t = 0</text>
+
+          <rect class="s-note" x="400" y="364" width="280" height="20" rx="4"/><text class="n-label" x="540" y="378" text-anchor="middle">wait for 0.35 s pause (0.2 s breath after 3 s)</text>
+          <text class="t-label" x="10" y="378">0.2–0.35 s</text>
+          <line class="m-audio" x1="395" y1="404" x2="651" y2="404" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="398">whole utterance (WAV)</text>
+          <line class="m-text" x1="651" y1="426" x2="395" y2="426" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="442">final text: "Hello Priya, can we move the launch review…"</text>
+          <text class="t-label" x="10" y="430">0.34 s</text>
+          <line class="m-data" x1="385" y1="456" x2="255" y2="456" marker-end="url(#sq-d)"/>
+          <text class="m-label" x="262" y="452">final caption</text>
+          <rect class="s-note" x="400" y="462" width="118" height="20" rx="4"/><text class="n-label" x="459" y="476" text-anchor="middle">echo check</text>
+
+          <line class="m-text" x1="395" y1="500" x2="781" y2="500" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="494">text + interpreter instruction, once per listener language</text>
+          <line class="m-text" x1="781" y1="524" x2="395" y2="524" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="540">Hindi translation, streamed token by token</text>
+          <line class="m-data" x1="385" y1="552" x2="255" y2="552" marker-end="url(#sq-d)"/>
+          <text class="m-label" x="262" y="548">translation caption</text>
+
+          <line class="m-text" x1="395" y1="576" x2="911" y2="576" marker-end="url(#sq-t)"/>
+          <text class="m-label" x="402" y="570">"क्या हम लॉन्च रिव्यू…" + Ben's chosen voice, once per language</text>
+          <text class="t-label" x="10" y="580">1.04 s</text>
+          <line class="m-audio" x1="911" y1="600" x2="395" y2="600" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="402" y="616">Hindi speech · 48 kHz PCM, streamed</text>
+          <text class="t-label" x="10" y="604">1.10 s</text>
+          <rect class="s-note" x="400" y="624" width="210" height="20" rx="4"/><text class="n-label" x="505" y="638" text-anchor="middle">trim silence · speed up if queued</text>
+
+          <line class="m-audio" x1="385" y1="660" x2="255" y2="660" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="262" y="654">track translation-asha</text>
+          <line class="m-audio" x1="255" y1="684" x2="1045" y2="684" marker-end="url(#sq-a)"/>
+          <text class="m-label" x="263" y="700">Asha hears the Hindi translation (Opus)</text>
+          <text class="t-mark" x="10" y="688">1.22 s heard</text>
+        </svg>
+      </div>
+      <figcaption>Speech becomes text at Parakeet, stays text through Qwen, and becomes speech again at Magpie. The agent is the only participant that talks to the models. LiveKit forwards the captions to both callers, and the translated speech only to Asha. With more listener languages, the translation and speech steps run once per language, in parallel.</figcaption>
     </figure>
   </section>
 
